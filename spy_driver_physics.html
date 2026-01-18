@@ -1,0 +1,1337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>SPY DRIVER PHYSICS</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      touch-action: none;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    #game-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #hud {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 10px;
+      display: flex;
+      justify-content: space-between;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .hud-panel {
+      background: rgba(0,0,0,0.8);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+
+    #score-panel {
+      color: #0f0;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    #score-panel small {
+      display: block;
+      font-size: 10px;
+      color: #888;
+      font-weight: normal;
+    }
+
+    #stats-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      align-items: flex-end;
+    }
+
+    .stat-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-label {
+      font-size: 9px;
+      color: #888;
+      width: 45px;
+      text-align: right;
+    }
+
+    .bar-bg {
+      width: 70px;
+      height: 8px;
+      background: #333;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      transition: width 0.1s;
+    }
+
+    #health-fill { background: linear-gradient(90deg, #f00, #0f0); }
+    #boost-fill { background: linear-gradient(90deg, #08f, #0ff); }
+    #ram-fill { background: linear-gradient(90deg, #f80, #ff0); }
+
+    #message {
+      position: absolute;
+      top: 30%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 20;
+      opacity: 0;
+    }
+
+    #message.show {
+      animation: msgPop 1s ease-out forwards;
+    }
+
+    #message .big {
+      font-size: 28px;
+      font-weight: bold;
+      color: #fff;
+      text-shadow: 0 0 20px currentColor, 2px 2px 0 #000;
+    }
+
+    #message .small {
+      font-size: 12px;
+      color: #ff0;
+      margin-top: 4px;
+    }
+
+    @keyframes msgPop {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+      10% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+      70% { opacity: 1; }
+      100% { opacity: 0; transform: translate(-50%, -60%); }
+    }
+
+    .score-popup {
+      position: absolute;
+      font-weight: bold;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 15;
+      animation: scorePop 0.7s ease-out forwards;
+    }
+
+    @keyframes scorePop {
+      0% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; transform: translateY(-35px); }
+    }
+
+    #controls {
+      position: absolute;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      padding: 6px 14px;
+      border-radius: 15px;
+      color: #555;
+      font-size: 10px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    #controls b { color: #0f0; }
+
+    #start-screen {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, #000 0%, #112 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+      padding: 20px;
+    }
+
+    #start-screen h1 {
+      font-size: 32px;
+      color: #fff;
+      text-shadow: 0 0 30px #f80, 0 3px 0 #840;
+      margin-bottom: 5px;
+    }
+
+    #start-screen .subtitle {
+      color: #f80;
+      font-size: 12px;
+      letter-spacing: 3px;
+      margin-bottom: 25px;
+    }
+
+    .instructions {
+      background: rgba(255,255,255,0.05);
+      border-radius: 10px;
+      padding: 15px 20px;
+      margin-bottom: 25px;
+      max-width: 280px;
+    }
+
+    .inst-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+
+    .inst-row:last-child { margin-bottom: 0; }
+
+    .inst-icon {
+      width: 36px;
+      height: 36px;
+      background: rgba(255,128,0,0.2);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .inst-text {
+      flex: 1;
+      color: #999;
+    }
+
+    .inst-text b { color: #fff; }
+
+    #start-btn {
+      background: linear-gradient(180deg, #f80 0%, #a50 100%);
+      color: #fff;
+      border: none;
+      padding: 14px 45px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 25px;
+      box-shadow: 0 4px 15px rgba(255,128,0,0.4);
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="game"></canvas>
+    
+    <div id="hud">
+      <div class="hud-panel" id="score-panel">
+        <span id="score">$0</span>
+        <small>WRECKS: <span id="wrecks">0</span></small>
+      </div>
+      <div class="hud-panel" id="stats-panel">
+        <div class="stat-row">
+          <span class="stat-label">HEALTH</span>
+          <div class="bar-bg"><div class="bar-fill" id="health-fill" style="width:100%"></div></div>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">BOOST</span>
+          <div class="bar-bg"><div class="bar-fill" id="boost-fill" style="width:100%"></div></div>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">RAM</span>
+          <div class="bar-bg"><div class="bar-fill" id="ram-fill" style="width:100%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="message">
+      <div class="big"></div>
+      <div class="small"></div>
+    </div>
+
+    <div id="controls">
+      <b>DRAG</b> steer • <b>SWIPE UP</b> boost • <b>SWIPE DOWN</b> brake • <b>RAM</b> cars off road!
+    </div>
+
+    <div id="start-screen">
+      <h1>SPY DRIVER</h1>
+      <div class="subtitle">PHYSICS CHAOS</div>
+      
+      <div class="instructions">
+        <div class="inst-row">
+          <div class="inst-icon">👆</div>
+          <div class="inst-text"><b>Swipe Up</b> - Nitro boost</div>
+        </div>
+        <div class="inst-row">
+          <div class="inst-icon">👇</div>
+          <div class="inst-text"><b>Swipe Down</b> - Brake hard</div>
+        </div>
+        <div class="inst-row">
+          <div class="inst-icon">👈👉</div>
+          <div class="inst-text"><b>Drag L/R</b> - Steer freely</div>
+        </div>
+        <div class="inst-row">
+          <div class="inst-icon">💥</div>
+          <div class="inst-text"><b>RAM</b> cars off the road!</div>
+        </div>
+        <div class="inst-row">
+          <div class="inst-icon">🚗</div>
+          <div class="inst-text">Real <b>physics</b> collisions!</div>
+        </div>
+      </div>
+
+      <button id="start-btn">RAM 'EM!</button>
+    </div>
+  </div>
+
+  <script>
+    // ================================================
+    // SPY DRIVER - REAL PHYSICS ENGINE
+    // ================================================
+    
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    
+    // PHYSICS CONFIG
+    const PHYSICS = {
+      friction: 0.98,
+      roadFriction: 0.96,
+      grassFriction: 0.85,
+      angularFriction: 0.92,
+      bounciness: 0.6,
+      ramForce: 15,
+      pitForce: 25, // Extra spin for PIT maneuver
+      wallBounce: 0.5,
+      gravity: 0
+    };
+    
+    // GAME CONFIG
+    const CONFIG = {
+      baseSpeed: 4,
+      maxSpeed: 8,
+      boostSpeed: 12,
+      brakeSpeed: 1.5,
+      steerForce: 0.4,
+      boostDrain: 1.2,
+      boostRecharge: 0.2,
+      ramDrain: 15,
+      ramRecharge: 0.3
+    };
+    
+    // STATE
+    let W, H;
+    let roadLeft, roadRight, roadWidth;
+    let gameRunning = false;
+    let score = 0;
+    let wrecks = 0;
+    let health = 100;
+    let boost = 100;
+    let ramPower = 100;
+    let currentSpeed = CONFIG.baseSpeed;
+    let targetSpeed = CONFIG.baseSpeed;
+    let isBoosting = false;
+    let isBraking = false;
+    let frameCount = 0;
+    
+    // PLAYER - Physics body
+    const player = {
+      x: 0, y: 0,
+      vx: 0, vy: 0,
+      angle: 0,
+      angularVel: 0,
+      w: 30, h: 55,
+      mass: 1.5,
+      invincible: false,
+      invincibleTime: 0
+    };
+    
+    // OBJECTS
+    let vehicles = [];
+    let particles = [];
+    let sparks = [];
+    let skidMarks = [];
+    let roadMarkers = [];
+    let scenery = [];
+    
+    // INPUT
+    let touchStartX = 0, touchStartY = 0;
+    let touchCurrentX = 0, touchCurrentY = 0;
+    let isTouching = false;
+    let steerInput = 0;
+    
+    // TIMERS
+    let trafficTimer = 0;
+    
+    // ================================================
+    // RESIZE
+    // ================================================
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      
+      W = rect.width;
+      H = rect.height;
+      
+      roadWidth = Math.min(W * 0.7, 300);
+      roadLeft = (W - roadWidth) / 2;
+      roadRight = roadLeft + roadWidth;
+      
+      player.x = W / 2;
+      player.y = H * 0.7;
+      player.vx = 0;
+      player.vy = 0;
+      player.angle = 0;
+      
+      initRoad();
+      initScenery();
+    }
+    
+    function initRoad() {
+      roadMarkers = [];
+      for (let y = -50; y < H + 100; y += 40) {
+        roadMarkers.push({ y });
+      }
+    }
+    
+    function initScenery() {
+      scenery = [];
+      for (let y = -50; y < H + 150; y += 100) {
+        scenery.push({
+          x: roadLeft - 40 - Math.random() * 50,
+          y: y + Math.random() * 40,
+          type: Math.random() > 0.5 ? 'tree' : 'rock'
+        });
+        scenery.push({
+          x: roadRight + 40 + Math.random() * 50,
+          y: y + 50 + Math.random() * 40,
+          type: Math.random() > 0.5 ? 'tree' : 'rock'
+        });
+      }
+    }
+    
+    // ================================================
+    // INPUT
+    // ================================================
+    canvas.addEventListener('touchstart', e => {
+      e.preventDefault();
+      if (!gameRunning) return;
+      
+      const t = e.touches[0];
+      touchStartX = touchCurrentX = t.clientX;
+      touchStartY = touchCurrentY = t.clientY;
+      isTouching = true;
+    });
+    
+    canvas.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (!gameRunning || !isTouching) return;
+      
+      const t = e.touches[0];
+      const dx = t.clientX - touchCurrentX;
+      const dy = t.clientY - touchStartY;
+      
+      touchCurrentX = t.clientX;
+      
+      // Horizontal = steering
+      steerInput = dx * 0.15;
+      
+      // Vertical = speed
+      if (dy < -50 && boost > 5) {
+        isBoosting = true;
+        isBraking = false;
+        targetSpeed = CONFIG.boostSpeed;
+      } else if (dy > 50) {
+        isBoosting = false;
+        isBraking = true;
+        targetSpeed = CONFIG.brakeSpeed;
+      } else {
+        isBoosting = false;
+        isBraking = false;
+        targetSpeed = CONFIG.baseSpeed;
+      }
+    });
+    
+    canvas.addEventListener('touchend', e => {
+      e.preventDefault();
+      isTouching = false;
+      steerInput = 0;
+      isBoosting = false;
+      isBraking = false;
+      targetSpeed = CONFIG.baseSpeed;
+    });
+    
+    // Keyboard
+    const keys = {};
+    document.addEventListener('keydown', e => {
+      keys[e.key] = true;
+      if (e.key === 'ArrowUp' && boost > 5) { isBoosting = true; targetSpeed = CONFIG.boostSpeed; }
+      if (e.key === 'ArrowDown') { isBraking = true; targetSpeed = CONFIG.brakeSpeed; }
+    });
+    
+    document.addEventListener('keyup', e => {
+      keys[e.key] = false;
+      if (e.key === 'ArrowUp') { isBoosting = false; targetSpeed = CONFIG.baseSpeed; }
+      if (e.key === 'ArrowDown') { isBraking = false; targetSpeed = CONFIG.baseSpeed; }
+    });
+    
+    // ================================================
+    // PHYSICS HELPERS
+    // ================================================
+    function getCorners(body) {
+      const cos = Math.cos(body.angle);
+      const sin = Math.sin(body.angle);
+      const hw = body.w / 2;
+      const hh = body.h / 2;
+      
+      return [
+        { x: body.x + cos * -hw - sin * -hh, y: body.y + sin * -hw + cos * -hh },
+        { x: body.x + cos * hw - sin * -hh, y: body.y + sin * hw + cos * -hh },
+        { x: body.x + cos * hw - sin * hh, y: body.y + sin * hw + cos * hh },
+        { x: body.x + cos * -hw - sin * hh, y: body.y + sin * -hw + cos * hh }
+      ];
+    }
+    
+    function getBoundingBox(body) {
+      const corners = getCorners(body);
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const c of corners) {
+        minX = Math.min(minX, c.x);
+        minY = Math.min(minY, c.y);
+        maxX = Math.max(maxX, c.x);
+        maxY = Math.max(maxY, c.y);
+      }
+      return { minX, minY, maxX, maxY };
+    }
+    
+    function bodiesOverlap(a, b) {
+      const boxA = getBoundingBox(a);
+      const boxB = getBoundingBox(b);
+      
+      return !(boxA.maxX < boxB.minX || boxA.minX > boxB.maxX ||
+               boxA.maxY < boxB.minY || boxA.minY > boxB.maxY);
+    }
+    
+    function resolveCollision(a, b) {
+      // Vector from a to b
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const nx = dx / dist;
+      const ny = dy / dist;
+      
+      // Relative velocity
+      const dvx = a.vx - b.vx;
+      const dvy = a.vy - b.vy;
+      const dvn = dvx * nx + dvy * ny;
+      
+      // Don't resolve if moving apart
+      if (dvn < 0) return;
+      
+      // Impulse
+      const totalMass = a.mass + b.mass;
+      const impulse = (2 * dvn) / totalMass * PHYSICS.bounciness;
+      
+      // Apply impulse
+      a.vx -= impulse * b.mass * nx;
+      a.vy -= impulse * b.mass * ny;
+      b.vx += impulse * a.mass * nx;
+      b.vy += impulse * a.mass * ny;
+      
+      // Calculate impact point relative to centers
+      const impactX = (a.x + b.x) / 2;
+      const impactY = (a.y + b.y) / 2;
+      
+      // Angular impulse (torque) - makes cars spin!
+      const relAx = impactX - a.x;
+      const relAy = impactY - a.y;
+      const relBx = impactX - b.x;
+      const relBy = impactY - b.y;
+      
+      // Cross product for torque
+      const torqueA = (relAx * (-impulse * b.mass * ny) - relAy * (-impulse * b.mass * nx)) * 0.01;
+      const torqueB = (relBx * (impulse * a.mass * ny) - relBy * (impulse * a.mass * nx)) * 0.01;
+      
+      a.angularVel += torqueA / a.mass;
+      b.angularVel += torqueB / b.mass;
+      
+      // Separate bodies
+      const overlap = (a.w/2 + b.w/2) - dist + 5;
+      if (overlap > 0) {
+        const sepX = nx * overlap / 2;
+        const sepY = ny * overlap / 2;
+        a.x -= sepX;
+        a.y -= sepY;
+        b.x += sepX;
+        b.y += sepY;
+      }
+      
+      // Spawn sparks at collision point
+      spawnSparks(impactX, impactY, Math.sqrt(dvx*dvx + dvy*dvy));
+      
+      return Math.abs(dvn);
+    }
+    
+    function applyPITManeuver(target, attacker) {
+      // PIT = Pursuit Intervention Technique
+      // Hit rear corner = massive spin
+      
+      const dx = target.x - attacker.x;
+      const dy = target.y - attacker.y;
+      const angle = Math.atan2(dy, dx);
+      
+      // Check if hitting rear
+      const relAngle = angle - target.angle;
+      const hitRear = Math.abs(Math.sin(relAngle)) > 0.5 && dy < 0;
+      
+      if (hitRear) {
+        // Big spin!
+        const spinDir = dx > 0 ? 1 : -1;
+        target.angularVel += spinDir * PHYSICS.pitForce * 0.05;
+        target.vx += dx * 0.3;
+        target.vy += dy * 0.3;
+        
+        showMessage('PIT!', '+500', '#f80');
+        addScore(500);
+        
+        return true;
+      }
+      
+      return false;
+    }
+    
+    // ================================================
+    // PARTICLES & EFFECTS
+    // ================================================
+    function spawnParticles(x, y, color, count, spread = 5) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x, y,
+          vx: (Math.random() - 0.5) * spread,
+          vy: (Math.random() - 0.5) * spread,
+          color,
+          size: 2 + Math.random() * 4,
+          life: 25 + Math.random() * 20
+        });
+      }
+    }
+    
+    function spawnSparks(x, y, intensity) {
+      const count = Math.min(15, Math.floor(intensity * 2));
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 2 + Math.random() * intensity * 0.5;
+        sparks.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 15 + Math.random() * 15
+        });
+      }
+    }
+    
+    function addSkidMark(x, y, angle) {
+      skidMarks.push({ x, y, angle, alpha: 0.4 });
+      if (skidMarks.length > 200) skidMarks.shift();
+    }
+    
+    function showMessage(big, small = '', color = '#fff') {
+      const el = document.getElementById('message');
+      el.querySelector('.big').textContent = big;
+      el.querySelector('.big').style.color = color;
+      el.querySelector('.small').textContent = small;
+      el.classList.remove('show');
+      void el.offsetWidth;
+      el.classList.add('show');
+    }
+    
+    function showScorePopup(x, y, text, color) {
+      const popup = document.createElement('div');
+      popup.className = 'score-popup';
+      popup.textContent = text;
+      popup.style.left = x + 'px';
+      popup.style.top = y + 'px';
+      popup.style.color = color;
+      document.getElementById('game-container').appendChild(popup);
+      setTimeout(() => popup.remove(), 700);
+    }
+    
+    function addScore(pts) {
+      score += pts;
+      document.getElementById('score').textContent = '$' + score.toLocaleString();
+    }
+    
+    // ================================================
+    // VEHICLE SPAWNING
+    // ================================================
+    function spawnVehicle() {
+      const types = ['sedan', 'sedan', 'truck', 'sports', 'suv'];
+      const type = types[Math.floor(Math.random() * types.length)];
+      
+      // Random x position on road
+      const margin = 30;
+      const x = roadLeft + margin + Math.random() * (roadWidth - margin * 2);
+      
+      const v = {
+        x,
+        y: -80,
+        vx: (Math.random() - 0.5) * 0.5, // Slight drift
+        vy: 0,
+        angle: 0,
+        angularVel: 0,
+        w: 28,
+        h: 50,
+        mass: 1,
+        type,
+        color: '#888',
+        baseSpeed: currentSpeed * 0.6,
+        health: 1,
+        value: 100,
+        wrecked: false,
+        offRoad: false,
+        ai: {
+          targetX: x,
+          panic: false,
+          panicTimer: 0
+        }
+      };
+      
+      switch(type) {
+        case 'sedan':
+          v.color = ['#c44', '#44c', '#4c4', '#cc4', '#c4c'][Math.floor(Math.random() * 5)];
+          v.baseSpeed = currentSpeed * (0.55 + Math.random() * 0.2);
+          v.value = 100;
+          break;
+        case 'truck':
+          v.color = '#654';
+          v.w = 34;
+          v.h = 70;
+          v.mass = 2.5;
+          v.baseSpeed = currentSpeed * 0.4;
+          v.health = 2;
+          v.value = 200;
+          break;
+        case 'sports':
+          v.color = ['#f22', '#22f', '#f0f'][Math.floor(Math.random() * 3)];
+          v.w = 26;
+          v.h = 48;
+          v.mass = 0.8;
+          v.baseSpeed = currentSpeed * (0.7 + Math.random() * 0.3);
+          v.value = 150;
+          break;
+        case 'suv':
+          v.color = '#333';
+          v.w = 32;
+          v.h = 58;
+          v.mass = 1.8;
+          v.baseSpeed = currentSpeed * 0.55;
+          v.health = 2;
+          v.value = 180;
+          break;
+      }
+      
+      vehicles.push(v);
+    }
+    
+    // ================================================
+    // VEHICLE AI & PHYSICS
+    // ================================================
+    function updateVehicle(v) {
+      // Base forward velocity (relative to road scroll)
+      const relativeSpeed = currentSpeed - v.baseSpeed;
+      
+      if (!v.wrecked) {
+        // Normal driving
+        v.vy = relativeSpeed;
+        
+        // AI steering
+        if (v.ai.panic) {
+          // Panicking - erratic movement
+          v.ai.panicTimer--;
+          v.ai.targetX += (Math.random() - 0.5) * 20;
+          if (v.ai.panicTimer <= 0) v.ai.panic = false;
+        } else {
+          // Try to stay in lane, avoid others
+          let avoidForce = 0;
+          
+          for (const other of vehicles) {
+            if (other === v) continue;
+            const dx = other.x - v.x;
+            const dy = other.y - v.y;
+            
+            // Avoid cars ahead
+            if (dy < 0 && dy > -150 && Math.abs(dx) < 50) {
+              avoidForce += dx > 0 ? -2 : 2;
+            }
+          }
+          
+          // Avoid player
+          const pdx = player.x - v.x;
+          const pdy = player.y - v.y;
+          if (Math.abs(pdy) < 100 && Math.abs(pdx) < 60) {
+            avoidForce += pdx > 0 ? -3 : 3;
+          }
+          
+          v.ai.targetX += avoidForce;
+          v.ai.targetX = Math.max(roadLeft + 30, Math.min(roadRight - 30, v.ai.targetX));
+        }
+        
+        // Steer towards target
+        const steerDiff = v.ai.targetX - v.x;
+        v.vx += steerDiff * 0.02;
+        v.angle = v.vx * 0.05; // Visual steering
+      } else {
+        // Wrecked - just physics
+        v.vy = relativeSpeed + 2; // Slower, falling behind
+      }
+      
+      // Apply physics
+      v.x += v.vx;
+      v.y += v.vy;
+      v.angle += v.angularVel;
+      
+      // Friction
+      const onRoad = v.x > roadLeft && v.x < roadRight;
+      const friction = onRoad ? PHYSICS.roadFriction : PHYSICS.grassFriction;
+      
+      v.vx *= friction;
+      v.angularVel *= PHYSICS.angularFriction;
+      
+      // Off-road = wrecked eventually
+      if (!onRoad && !v.wrecked) {
+        v.offRoad = true;
+        // Grass slows down
+        v.vx *= 0.95;
+        
+        // If far off, wreck it
+        if (v.x < roadLeft - 50 || v.x > roadRight + 50) {
+          v.wrecked = true;
+          v.health = 0;
+          wrecks++;
+          document.getElementById('wrecks').textContent = wrecks;
+          addScore(v.value);
+          showScorePopup(v.x, v.y, '+' + v.value, '#0f0');
+          spawnParticles(v.x, v.y, v.color, 20, 8);
+        }
+      }
+      
+      // Skid marks when sliding
+      if (Math.abs(v.angularVel) > 0.05 || Math.abs(v.vx) > 2) {
+        addSkidMark(v.x, v.y, v.angle);
+      }
+    }
+    
+    // ================================================
+    // PLAYER PHYSICS
+    // ================================================
+    function updatePlayer() {
+      // Keyboard steering
+      if (keys['ArrowLeft']) steerInput = -CONFIG.steerForce;
+      else if (keys['ArrowRight']) steerInput = CONFIG.steerForce;
+      else if (!isTouching) steerInput *= 0.8;
+      
+      // Apply steering force
+      player.vx += steerInput;
+      
+      // Speed control
+      if (isBoosting && boost > 0) {
+        boost -= CONFIG.boostDrain;
+        currentSpeed += (targetSpeed - currentSpeed) * 0.1;
+      } else if (isBraking) {
+        currentSpeed += (targetSpeed - currentSpeed) * 0.15;
+        // Skid when braking hard
+        if (currentSpeed < CONFIG.baseSpeed * 0.8) {
+          addSkidMark(player.x - 8, player.y + player.h/3, player.angle);
+          addSkidMark(player.x + 8, player.y + player.h/3, player.angle);
+        }
+      } else {
+        currentSpeed += (CONFIG.baseSpeed - currentSpeed) * 0.05;
+        boost = Math.min(100, boost + CONFIG.boostRecharge);
+      }
+      
+      // Ram power recharge
+      ramPower = Math.min(100, ramPower + CONFIG.ramRecharge);
+      
+      // Apply velocity
+      player.x += player.vx;
+      player.angle += player.angularVel;
+      
+      // Clamp to screen
+      const margin = player.w / 2 + 10;
+      if (player.x < margin) {
+        player.x = margin;
+        player.vx = Math.abs(player.vx) * PHYSICS.wallBounce;
+        spawnSparks(margin, player.y, 5);
+      }
+      if (player.x > W - margin) {
+        player.x = W - margin;
+        player.vx = -Math.abs(player.vx) * PHYSICS.wallBounce;
+        spawnSparks(W - margin, player.y, 5);
+      }
+      
+      // Friction
+      const onRoad = player.x > roadLeft && player.x < roadRight;
+      const friction = onRoad ? PHYSICS.roadFriction : PHYSICS.grassFriction;
+      
+      player.vx *= friction;
+      player.angularVel *= PHYSICS.angularFriction;
+      
+      // Visual angle based on velocity
+      const targetAngle = player.vx * 0.03;
+      player.angle += (targetAngle - player.angle) * 0.2;
+      
+      // Invincibility
+      if (player.invincible) {
+        player.invincibleTime--;
+        if (player.invincibleTime <= 0) player.invincible = false;
+      }
+      
+      // Update UI
+      document.getElementById('boost-fill').style.width = boost + '%';
+      document.getElementById('ram-fill').style.width = ramPower + '%';
+    }
+    
+    // ================================================
+    // COLLISION DETECTION
+    // ================================================
+    function checkCollisions() {
+      // Player vs vehicles
+      for (let i = vehicles.length - 1; i >= 0; i--) {
+        const v = vehicles[i];
+        
+        if (bodiesOverlap(player, v)) {
+          // Collision!
+          const impactSpeed = resolveCollision(player, v);
+          
+          if (impactSpeed > 0) {
+            // Check for PIT maneuver
+            const wasPIT = applyPITManeuver(v, player);
+            
+            if (!wasPIT) {
+              // Regular ram
+              const ramBonus = isBoosting ? 2 : 1;
+              const damage = Math.floor(impactSpeed * 2 * ramBonus);
+              
+              v.health -= ramBonus;
+              v.ai.panic = true;
+              v.ai.panicTimer = 60;
+              
+              // Ram power gives extra push
+              if (ramPower > 20) {
+                const pushX = (v.x - player.x) * 0.5;
+                const pushY = (v.y - player.y) * 0.3;
+                v.vx += pushX;
+                v.vy += pushY;
+                ramPower -= CONFIG.ramDrain;
+              }
+              
+              // Wreck check
+              if (v.health <= 0 && !v.wrecked) {
+                v.wrecked = true;
+                wrecks++;
+                document.getElementById('wrecks').textContent = wrecks;
+                addScore(v.value * ramBonus);
+                showScorePopup(v.x, v.y - 30, '+' + (v.value * ramBonus), '#0f0');
+              }
+            }
+            
+            // Player damage
+            if (!player.invincible && impactSpeed > 3) {
+              health -= Math.floor(impactSpeed * 2);
+              player.invincible = true;
+              player.invincibleTime = 30;
+              document.getElementById('health-fill').style.width = Math.max(0, health) + '%';
+              
+              if (health <= 0) {
+                gameOver();
+              }
+            }
+          }
+        }
+      }
+      
+      // Vehicle vs vehicle
+      for (let i = 0; i < vehicles.length; i++) {
+        for (let j = i + 1; j < vehicles.length; j++) {
+          const a = vehicles[i];
+          const b = vehicles[j];
+          
+          if (bodiesOverlap(a, b)) {
+            resolveCollision(a, b);
+            
+            // Both panic
+            a.ai.panic = true;
+            a.ai.panicTimer = 40;
+            b.ai.panic = true;
+            b.ai.panicTimer = 40;
+          }
+        }
+      }
+    }
+    
+    function gameOver() {
+      gameRunning = false;
+      showMessage('WRECKED!', 'Score: $' + score.toLocaleString(), '#f00');
+      
+      setTimeout(() => {
+        document.getElementById('start-screen').classList.remove('hidden');
+      }, 2500);
+    }
+    
+    // ================================================
+    // UPDATE
+    // ================================================
+    function update() {
+      frameCount++;
+      
+      updatePlayer();
+      
+      // Scroll road
+      roadMarkers.forEach(m => {
+        m.y += currentSpeed;
+        if (m.y > H + 50) m.y -= H + 150;
+      });
+      
+      // Scroll scenery
+      scenery.forEach(s => {
+        s.y += currentSpeed * 0.5;
+        if (s.y > H + 100) {
+          s.y -= H + 250;
+        }
+      });
+      
+      // Fade skid marks
+      for (let i = skidMarks.length - 1; i >= 0; i--) {
+        skidMarks[i].y += currentSpeed;
+        skidMarks[i].alpha -= 0.002;
+        if (skidMarks[i].alpha <= 0 || skidMarks[i].y > H + 50) {
+          skidMarks.splice(i, 1);
+        }
+      }
+      
+      // Update vehicles
+      for (let i = vehicles.length - 1; i >= 0; i--) {
+        const v = vehicles[i];
+        updateVehicle(v);
+        
+        // Remove if off screen
+        if (v.y > H + 150 || v.y < -200 || v.x < -100 || v.x > W + 100) {
+          vehicles.splice(i, 1);
+        }
+      }
+      
+      // Update particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy + currentSpeed * 0.3;
+        p.life--;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+      
+      // Update sparks
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        s.x += s.vx;
+        s.y += s.vy + currentSpeed * 0.5;
+        s.vy += 0.2; // Gravity
+        s.life--;
+        if (s.life <= 0) sparks.splice(i, 1);
+      }
+      
+      // Spawn traffic
+      trafficTimer++;
+      if (trafficTimer > 50) {
+        trafficTimer = 0;
+        if (vehicles.length < 12) {
+          spawnVehicle();
+        }
+      }
+      
+      // Collisions
+      checkCollisions();
+      
+      // Score over time
+      if (frameCount % 30 === 0) {
+        addScore(Math.floor(currentSpeed));
+      }
+    }
+    
+    // ================================================
+    // DRAW
+    // ================================================
+    function draw() {
+      // Sky
+      ctx.fillStyle = '#345';
+      ctx.fillRect(0, 0, W, H);
+      
+      // Grass
+      ctx.fillStyle = '#2a5';
+      ctx.fillRect(0, 0, roadLeft - 3, H);
+      ctx.fillRect(roadRight + 3, 0, W - roadRight, H);
+      
+      // Grass texture
+      ctx.fillStyle = '#295';
+      for (let i = 0; i < 50; i++) {
+        const x = Math.random() < 0.5 ? Math.random() * (roadLeft - 10) : roadRight + 10 + Math.random() * (W - roadRight - 10);
+        const y = (frameCount * 2 + i * 40) % (H + 20) - 10;
+        ctx.fillRect(x, y, 3, 8);
+      }
+      
+      // Scenery
+      scenery.forEach(s => {
+        if (s.type === 'tree') {
+          ctx.fillStyle = '#530';
+          ctx.fillRect(s.x - 5, s.y, 10, 30);
+          ctx.fillStyle = '#3a5';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y - 10, 20, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = '#555';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, 15, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+      
+      // Road
+      ctx.fillStyle = '#333';
+      ctx.fillRect(roadLeft, 0, roadWidth, H);
+      
+      // Road edges
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(roadLeft - 3, 0, 6, H);
+      ctx.fillRect(roadRight - 3, 0, 6, H);
+      
+      // Center line
+      ctx.fillStyle = '#ff0';
+      roadMarkers.forEach(m => {
+        ctx.fillRect(W/2 - 2, m.y, 4, 20);
+      });
+      
+      // Skid marks
+      ctx.fillStyle = '#222';
+      skidMarks.forEach(s => {
+        ctx.globalAlpha = s.alpha;
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(s.angle);
+        ctx.fillRect(-3, -8, 6, 16);
+        ctx.restore();
+      });
+      ctx.globalAlpha = 1;
+      
+      // Vehicles
+      vehicles.forEach(v => drawVehicle(v));
+      
+      // Player
+      if (!player.invincible || frameCount % 4 < 2) {
+        drawPlayer();
+      }
+      
+      // Particles
+      particles.forEach(p => {
+        ctx.globalAlpha = p.life / 45;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * (p.life / 45), 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      
+      // Sparks
+      ctx.fillStyle = '#ff0';
+      sparks.forEach(s => {
+        ctx.globalAlpha = s.life / 30;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Spark trail
+        ctx.strokeStyle = '#f80';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(s.x - s.vx * 3, s.y - s.vy * 3);
+        ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+    }
+    
+    function drawVehicle(v) {
+      ctx.save();
+      ctx.translate(v.x, v.y);
+      ctx.rotate(v.angle);
+      
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(-v.w/2 + 4, -v.h/2 + 4, v.w, v.h);
+      
+      // Body
+      ctx.fillStyle = v.wrecked ? '#444' : v.color;
+      ctx.fillRect(-v.w/2, -v.h/2, v.w, v.h);
+      
+      // Windshield
+      ctx.fillStyle = v.wrecked ? '#333' : '#446';
+      ctx.fillRect(-v.w/2 + 4, -v.h/2 + 8, v.w - 8, v.h * 0.22);
+      
+      // Damage marks if hit
+      if (v.health < (v.type === 'truck' || v.type === 'suv' ? 2 : 1)) {
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-v.w/3, -v.h/4);
+        ctx.lineTo(v.w/4, v.h/4);
+        ctx.moveTo(v.w/3, -v.h/3);
+        ctx.lineTo(-v.w/4, v.h/5);
+        ctx.stroke();
+      }
+      
+      ctx.restore();
+    }
+    
+    function drawPlayer() {
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.rotate(player.angle);
+      
+      // Boost flames
+      if (isBoosting && boost > 0) {
+        const flameLen = 20 + Math.random() * 20;
+        ctx.fillStyle = '#f80';
+        ctx.beginPath();
+        ctx.moveTo(-10, player.h/2);
+        ctx.lineTo(0, player.h/2 + flameLen);
+        ctx.lineTo(10, player.h/2);
+        ctx.fill();
+        
+        ctx.fillStyle = '#ff0';
+        ctx.beginPath();
+        ctx.moveTo(-5, player.h/2);
+        ctx.lineTo(0, player.h/2 + flameLen * 0.6);
+        ctx.lineTo(5, player.h/2);
+        ctx.fill();
+      }
+      
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(-player.w/2 + 4, -player.h/2 + 4, player.w, player.h);
+      
+      // Body
+      ctx.fillStyle = '#ddd';
+      ctx.fillRect(-player.w/2, -player.h/2, player.w, player.h);
+      
+      // Racing stripe
+      ctx.fillStyle = '#c00';
+      ctx.fillRect(-4, -player.h/2, 8, player.h);
+      
+      // Windshield
+      ctx.fillStyle = '#226';
+      ctx.fillRect(-player.w/2 + 4, -player.h/2 + 10, player.w - 8, 14);
+      
+      // Headlights
+      ctx.fillStyle = '#ff0';
+      ctx.fillRect(-player.w/2 + 3, -player.h/2 + 2, 7, 5);
+      ctx.fillRect(player.w/2 - 10, -player.h/2 + 2, 7, 5);
+      
+      // Tail lights
+      ctx.fillStyle = isBraking ? '#f00' : '#800';
+      ctx.fillRect(-player.w/2 + 3, player.h/2 - 7, 7, 5);
+      ctx.fillRect(player.w/2 - 10, player.h/2 - 7, 7, 5);
+      
+      // Ram bar (when charged)
+      if (ramPower > 50) {
+        ctx.fillStyle = '#888';
+        ctx.fillRect(-player.w/2 - 2, -player.h/2 - 3, player.w + 4, 5);
+      }
+      
+      ctx.restore();
+    }
+    
+    // ================================================
+    // GAME LOOP
+    // ================================================
+    function gameLoop() {
+      if (!gameRunning) return;
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // ================================================
+    // START
+    // ================================================
+    function startGame() {
+      gameRunning = true;
+      score = 0;
+      wrecks = 0;
+      health = 100;
+      boost = 100;
+      ramPower = 100;
+      currentSpeed = CONFIG.baseSpeed;
+      frameCount = 0;
+      
+      player.x = W / 2;
+      player.y = H * 0.7;
+      player.vx = 0;
+      player.vy = 0;
+      player.angle = 0;
+      player.angularVel = 0;
+      player.invincible = false;
+      
+      vehicles = [];
+      particles = [];
+      sparks = [];
+      skidMarks = [];
+      
+      trafficTimer = 0;
+      steerInput = 0;
+      
+      document.getElementById('score').textContent = '$0';
+      document.getElementById('wrecks').textContent = '0';
+      document.getElementById('health-fill').style.width = '100%';
+      document.getElementById('boost-fill').style.width = '100%';
+      document.getElementById('ram-fill').style.width = '100%';
+      
+      document.getElementById('start-screen').classList.add('hidden');
+      
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // INIT
+    window.addEventListener('resize', resize);
+    resize();
+    
+    document.getElementById('start-btn').addEventListener('click', startGame);
+    document.body.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+  </script>
+</body>
+</html>
