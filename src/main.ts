@@ -1,6 +1,7 @@
 import Matter from 'matter-js';
 import { VEHICLE_CONFIGS, type VehicleType } from './game/vehicles.ts';
 import { ROAD_WIDTH, ROAD_LEFT, ROAD_RIGHT, LANE_COUNT, LANE_WIDTH, BARRIER_WIDTH, getLaneX } from './game/road.ts';
+import { createRng, parseSeed } from './utils/random.ts';
 
 // ============================================================================
 // TYPES
@@ -29,12 +30,16 @@ interface GameState {
   traffic: Vehicle[];
   barriers: { left: Matter.Body; right: Matter.Body };
   cash: number;
+  seed: number;
   heat: number;
   stars: number;
   lastCollisionTime: number;
   lastBarrierDamageTime: number;
   playerIFrameTimer: number;
   lastHeatGainTime: number;
+  alertText: string;
+  alertColor: string;
+  alertTimer: number;
   boost: number;
   scrollY: number;
   spawnTimer: number;
@@ -94,6 +99,7 @@ declare global {
 
 const input = { left: false, right: false, boost: false, brake: false };
 let vehicleId = 0;
+let rng = Math.random;
 
 // ============================================================================
 // ARCADE HANDLING HELPERS
@@ -166,6 +172,10 @@ const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 const clamp01 = (value: number): number => clamp(value, 0, 1);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+const random = (): number => rng();
+const randRange = (min: number, max: number): number => min + random() * (max - min);
+const randInt = (maxExclusive: number): number =>
+  maxExclusive <= 0 ? 0 : Math.floor(random() * maxExclusive);
 
 const getNearestLane = (x: number): number => {
   const laneIndex = Math.round((x - (ROAD_LEFT + LANE_WIDTH / 2)) / LANE_WIDTH);
@@ -259,8 +269,15 @@ const applyHeatGain = (state: GameState, amount: number, now: number): void => {
   state.lastHeatGainTime = now;
 };
 
+const triggerAlert = (state: GameState, text: string, color: string): void => {
+  if (state.alertTimer > 0.6) return;
+  state.alertText = text;
+  state.alertColor = color;
+  state.alertTimer = 1.6;
+};
+
 const pickVehicleType = (heat: number, elapsedTime: number): VehicleType => {
-  const roll = Math.random();
+  const roll = random();
   if (elapsedTime < 30) return 'sedan';
   if (heat < 0.2) {
     return roll < 0.9 ? 'sedan' : 'sports';
@@ -326,14 +343,14 @@ const createVehicle = (engine: Matter.Engine, type: VehicleType, x: number, y: n
   const isPolice = type === 'police';
   // Variable target speed based on vehicle type (±20% variation)
   const baseSpeed = config.maxSpeed;
-  const speedVariation = 0.8 + Math.random() * 0.4; // 80% to 120%
+  const speedVariation = randRange(0.8, 1.2); // 80% to 120%
   const targetSpeed = baseSpeed * speedVariation;
 
   log('SPAWN', `${type.toUpperCase()} #${id} at lane ${lane} (x=${x.toFixed(0)}, y=${y.toFixed(0)})${isPolice ? ' [WILL CHASE]' : ''}`);
   return {
     id, type, body, integrity: 100, lane, hits: 0, spawnTime,
     targetLane: lane,
-    laneChangeTimer: 2 + Math.random() * 3,
+    laneChangeTimer: randRange(2, 5),
     isChasing: isPolice,
     stunTimer: 0,
     targetSpeed,
@@ -351,6 +368,10 @@ let initialized = false;
 const main = (): void => {
   if (initialized) return;
   initialized = true;
+
+  const seedParam = new URLSearchParams(window.location.search).get('seed');
+  const seed = parseSeed(seedParam, Date.now());
+  rng = createRng(seed);
 
   console.log('%c🎮 FAST FEROCIOUS FANDANGO: FOOLISH FUGITIVES 🎮', 'font-size: 20px; color: #c41e3a; font-weight: bold');
   console.log('%cPress D to toggle DEMO MODE | Check window.GAME for debug access', 'color: #888');
@@ -407,6 +428,7 @@ const main = (): void => {
     traffic: [],
     barriers: { left: leftBarrier, right: rightBarrier },
     cash: 0,
+    seed,
     heat: 0,
     stars: 0,
     lastCollisionTime: performance.now(),
@@ -416,13 +438,16 @@ const main = (): void => {
     boost: 100,
     scrollY: 0,
     spawnTimer: 0,
-    pursuerSpawnTimer: 8 + Math.random() * 5, // First pursuer after 8-13 seconds
+    pursuerSpawnTimer: randRange(8, 13), // First pursuer after 8-13 seconds
     busted: false,
     bustedTimer: 0,
     demoMode: true, // START IN DEMO MODE
     frameCount: 0,
     activeCollisions: new Set<number>(),
     elapsedTime: 0,
+    alertText: '',
+    alertColor: '#fff',
+    alertTimer: 0,
     screenShake: 0,
     slowMo: 0,
   };
@@ -437,6 +462,7 @@ const main = (): void => {
     getStatus: () => {
       console.log('%c=== GAME STATUS ===', 'font-size: 14px; font-weight: bold');
       log('STATE', `Cash: $${state.cash.toLocaleString()}`);
+      log('STATE', `Seed: ${state.seed}`);
       log('STATE', `Stars: ${state.stars}/5`);
       log('STATE', `Heat: ${(state.heat * 100).toFixed(1)}%`);
       log('STATE', `Integrity: ${state.player.integrity.toFixed(1)}%`);
@@ -561,7 +587,7 @@ const update = (state: GameState, dt: number): void => {
       state.lastCollisionTime = performance.now();
       state.lastHeatGainTime = state.lastCollisionTime;
       state.spawnTimer = 0.6;
-      state.pursuerSpawnTimer = 8 + Math.random() * 5;
+      state.pursuerSpawnTimer = randRange(8, 13);
       for (const v of state.traffic) {
         Matter.Composite.remove(state.engine.world, v.body);
       }
@@ -584,6 +610,7 @@ const update = (state: GameState, dt: number): void => {
     log('STAR', `⭐ Wanted level: ${state.stars}`);
   }
   state.playerIFrameTimer = Math.max(0, state.playerIFrameTimer - stepDt);
+  state.alertTimer = Math.max(0, state.alertTimer - stepDt);
 
   // Get input (demo AI or manual)
   const currentInput = state.demoMode ? demoAI(state) : input;
@@ -612,19 +639,21 @@ const update = (state: GameState, dt: number): void => {
 
   state.spawnTimer -= stepDt;
   if (state.spawnTimer <= 0) {
-    state.spawnTimer = spawnInterval * (0.8 + Math.random() * 0.4);
+    state.spawnTimer = spawnInterval * randRange(0.8, 1.2);
     if (state.traffic.length < maxTraffic) {
       const playerLane = getNearestLane(body.position.x);
-      const spawnY = body.position.y - spawnDistance - Math.random() * 80;
+      const spawnY = body.position.y - spawnDistance - randRange(0, 80);
       const openLanes = getOpenLanes(state, spawnY, state.heat, playerLane);
       if (openLanes.length === 0) {
         state.spawnTimer = 0.2;
       } else {
-        const lane = openLanes[Math.floor(Math.random() * openLanes.length)]!;
+        const lane = openLanes[randInt(openLanes.length)]!;
         const x = getLaneX(lane);
         const type = pickVehicleType(state.heat, state.elapsedTime);
         const vehicle = createVehicle(state.engine, type, x, spawnY, lane);
         state.traffic.push(vehicle);
+        if (type === 'police') triggerAlert(state, 'POLICE AHEAD', '#ff4444');
+        if (type === 'geldtransporter') triggerAlert(state, 'HEIST TARGET', '#ffd700');
       }
     } else {
       state.spawnTimer = spawnInterval * 0.5;
@@ -635,16 +664,17 @@ const update = (state: GameState, dt: number): void => {
   state.pursuerSpawnTimer -= stepDt;
   if (state.pursuerSpawnTimer <= 0 && state.heat > 0.25) {
     const intensity = clamp01((state.heat - 0.25) / 0.75);
-    state.pursuerSpawnTimer = lerp(10, 4.5, intensity) + Math.random() * 2;
-    const lane = Math.floor(Math.random() * LANE_COUNT);
+    state.pursuerSpawnTimer = lerp(10, 4.5, intensity) + randRange(0, 2);
+    const lane = randInt(LANE_COUNT);
     const x = getLaneX(lane);
     const spawnY = body.position.y + 700;
     const pursuer = createVehicle(state.engine, 'police', x, spawnY, lane);
     pursuer.isPursuer = true;
     pursuer.isChasing = true;
-    pursuer.targetSpeed = lerp(10, 14, intensity) + Math.random() * 2;
+    pursuer.targetSpeed = lerp(10, 14, intensity) + randRange(0, 2);
     state.traffic.push(pursuer);
     log('SPAWN', `🚨 PURSUER POLICE #${pursuer.id} spawned BEHIND! [PURSUING]`);
+    triggerAlert(state, 'POLICE BEHIND', '#ff4444');
   }
 
   // CHAOS PHYSICS: Cars get THROWN around and SLIDE!
@@ -703,7 +733,7 @@ const update = (state: GameState, dt: number): void => {
       let steerForce = 0;
 
       // Police/chasers pursue aggressively
-      if (v.isChasing || (v.hits > 0 && !v.isChasing && Math.random() < 0.5)) {
+      if (v.isChasing || (v.hits > 0 && !v.isChasing && random() < 0.5)) {
         if (v.hits > 0 && !v.isChasing) {
           v.isChasing = true;
           log('HIT', `🔥 ${v.type.toUpperCase()} #${v.id} is now ANGRY!`);
@@ -957,7 +987,7 @@ const destroyVehicle = (state: GameState, vehicle: Vehicle): void => {
 
   // Cash drop
   if (maxCash > 0) {
-    const cashAmount = minCash + Math.floor(Math.random() * (maxCash - minCash));
+    const cashAmount = minCash + randInt(maxCash - minCash);
     state.cash += cashAmount;
     log('CASH', `💰 +$${cashAmount.toLocaleString()} from ${vehicle.type.toUpperCase()} (Total: $${state.cash.toLocaleString()})`);
   }
@@ -1044,6 +1074,16 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
 
   // HUD
   drawHUD(ctx, state, w, h);
+
+  if (state.alertTimer > 0) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, state.alertTimer / 0.4);
+    ctx.fillStyle = state.alertColor;
+    ctx.font = 'bold 20px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(state.alertText, w / 2, 60);
+    ctx.restore();
+  }
 
   // Demo mode indicator
   if (state.demoMode) {

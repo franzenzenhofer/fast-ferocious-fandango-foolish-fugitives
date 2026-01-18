@@ -18,6 +18,7 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 ## Build, Test, and Development Commands
 - `npm install` install dependencies.
 - `npm run dev` start the Vite dev server (auto-opens a browser).
+- Add `?seed=1234` to the dev URL to reproduce spawns (e.g., `http://127.0.0.1:5173/?seed=1234`).
 - `npm run build` typecheck + Vite production build.
 - `npm run preview` serve the built app locally.
 - `npm run lint` ESLint on `src/**/*.ts`.
