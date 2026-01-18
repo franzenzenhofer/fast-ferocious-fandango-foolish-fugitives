@@ -42,10 +42,11 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 - Forward speed still aggressive; tune drive forces for smoother pacing.
 - Difficulty ramp and energy-based damage not implemented yet.
 
-## Next Fixes (Round 6)
+## Next Fixes (Round 7)
 - [x] Improve HUD clarity at higher heat (alerts, heat indicator, collision cue).
+- [x] Tune collision damage/i-frames so integrity doesn't evaporate in early-medium heat.
+- [ ] Confirm collision tuning at higher heat (2+ stars) still feels fair.
 - [ ] Port traction + fixed timestep into `src/game/Game.ts` if switching to the modular path.
-- [ ] Tune collision damage/i-frames so integrity doesn't evaporate in early-medium heat.
 
 ## MCP Feedback Round 2 (Post Energy Damage)
 - Wrecked vehicles appear; collisions now trigger slow-mo and damage tiers.
@@ -71,3 +72,8 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 - Early phase: ~8s heat ~0.16, stars 0, traffic 1; integrity dipped under demo collisions.
 - At ~58s: heat ~0.62, stars 3, traffic 7; police-behind alert fired.
 - Integrity can fall to single digits under sustained rams; damage pacing still needs tuning.
+
+## MCP Feedback Round 7 (Damage Tuning)
+- Early phase: ~8s heat ~0.11, stars 0, traffic 1; integrity ~94.
+- At ~58s: heat ~0.40, stars 2, traffic 5; integrity ~72.
+- Damage pacing improved; validate higher-heat fairness next.

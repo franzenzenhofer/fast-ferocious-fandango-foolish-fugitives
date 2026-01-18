@@ -820,12 +820,12 @@ const handleCollisions = (state: GameState): void => {
       const now = performance.now();
       const lateralSpeed = Math.abs(state.player.body.velocity.x);
       if (lateralSpeed > 1 && now - state.lastBarrierDamageTime > 200 && state.playerIFrameTimer <= 0) {
-        const damage = Math.min(8, Math.max(0.5, (lateralSpeed - 1) * 1.2));
+        const damage = Math.min(7, Math.max(0.5, (lateralSpeed - 1) * 1.0));
         state.player.integrity -= damage;
         state.lastBarrierDamageTime = now;
         state.lastCollisionTime = now;
         applyHeatGain(state, 0.001, now);
-        state.playerIFrameTimer = 0.15;
+        state.playerIFrameTimer = 0.25;
         state.screenShake = Math.max(state.screenShake, Math.min(4, lateralSpeed));
         log('DAMAGE', `Player scraped barrier (-${damage.toFixed(1)}%)`);
       }
@@ -877,14 +877,15 @@ const handleCollisions = (state: GameState): void => {
         const heatGain = tier === 'tap' ? 0 : tier === 'hit' ? 0.003 : tier === 'slam' ? 0.006 : 0.012;
         applyHeatGain(state, heatGain, collisionTime);
 
-        const basePlayerDamage = tier === 'tap' ? 0 : tier === 'hit' ? 2 : tier === 'slam' ? 5 : 10;
+        const basePlayerDamage = tier === 'tap' ? 0 : tier === 'hit' ? 1.5 : tier === 'slam' ? 4 : 8;
         const baseVehicleDamage = tier === 'tap' ? 0 : tier === 'hit' ? 10 : tier === 'slam' ? 24 : 45;
 
         const directionMultiplier = isFrontal ? 0.25 : isSide ? 0.7 : isRear ? 1.0 : 0.5;
-        const playerDamage = basePlayerDamage * directionMultiplier;
+        const heatScale = lerp(0.65, 1.0, state.heat);
+        const playerDamage = basePlayerDamage * directionMultiplier * heatScale;
         if (playerDamage > 0 && state.playerIFrameTimer <= 0) {
           state.player.integrity -= playerDamage;
-          const iFrameDuration = tier === 'crash' ? 0.35 : tier === 'slam' ? 0.2 : tier === 'hit' ? 0.1 : 0;
+          const iFrameDuration = tier === 'crash' ? 0.5 : tier === 'slam' ? 0.35 : tier === 'hit' ? 0.2 : 0;
           state.playerIFrameTimer = Math.max(
             state.playerIFrameTimer,
             iFrameDuration
