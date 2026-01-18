@@ -29,10 +29,12 @@ interface GameState {
   traffic: Vehicle[];
   barriers: { left: Matter.Body; right: Matter.Body };
   cash: number;
+  heat: number;
   stars: number;
-  starDecayTimer: number;
   lastCollisionTime: number;
   lastBarrierDamageTime: number;
+  playerIFrameTimer: number;
+  lastHeatGainTime: number;
   boost: number;
   scrollY: number;
   spawnTimer: number;
@@ -42,6 +44,7 @@ interface GameState {
   demoMode: boolean;
   frameCount: number;
   activeCollisions: Set<number>;
+  elapsedTime: number;
   // JUICE
   screenShake: number;
   slowMo: number;
@@ -161,6 +164,13 @@ const MAX_SPEED = 18;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
+const clamp01 = (value: number): number => clamp(value, 0, 1);
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+const getNearestLane = (x: number): number => {
+  const laneIndex = Math.round((x - (ROAD_LEFT + LANE_WIDTH / 2)) / LANE_WIDTH);
+  return clamp(laneIndex, 0, LANE_COUNT - 1);
+};
 
 const applyArcadeTraction = (body: Matter.Body, dt: number, params: TractionParams): void => {
   if (!Number.isFinite(body.velocity.x) || !Number.isFinite(body.velocity.y)) {
@@ -232,12 +242,6 @@ const applyRoadBounds = (body: Matter.Body): void => {
     const dist = body.position.x - rightLimit;
     Matter.Body.applyForce(body, body.position, { x: -dist * spring * body.mass, y: 0 });
   }
-
-  if (body.position.x < leftLimit || body.position.x > rightLimit) {
-    const clampedX = clamp(body.position.x, leftLimit, rightLimit);
-    Matter.Body.setPosition(body, { x: clampedX, y: body.position.y });
-    Matter.Body.setVelocity(body, { x: 0, y: body.velocity.y });
-  }
 };
 
 const impactEnergy = (a: Matter.Body, b: Matter.Body): number => {
@@ -246,6 +250,56 @@ const impactEnergy = (a: Matter.Body, b: Matter.Body): number => {
   const relSpeed = Math.hypot(rvx, rvy);
   const reducedMass = (a.mass * b.mass) / (a.mass + b.mass);
   return 0.5 * reducedMass * relSpeed * relSpeed;
+};
+
+const applyHeatGain = (state: GameState, amount: number, now: number): void => {
+  if (amount <= 0) return;
+  if (now - state.lastHeatGainTime < 250) return;
+  state.heat = clamp01(state.heat + amount);
+  state.lastHeatGainTime = now;
+};
+
+const pickVehicleType = (heat: number, elapsedTime: number): VehicleType => {
+  const roll = Math.random();
+  if (elapsedTime < 30) return 'sedan';
+  if (heat < 0.2) {
+    return roll < 0.9 ? 'sedan' : 'sports';
+  }
+  if (heat < 0.4) {
+    return roll < 0.6 ? 'sedan' : roll < 0.85 ? 'sports' : 'truck';
+  }
+  if (heat < 0.6) {
+    return roll < 0.45 ? 'sedan' : roll < 0.7 ? 'sports' : roll < 0.9 ? 'truck' : 'police';
+  }
+  if (heat < 0.8) {
+    return roll < 0.35 ? 'sedan' : roll < 0.6 ? 'sports' : roll < 0.82 ? 'truck' : 'police';
+  }
+  return roll < 0.25 ? 'sedan' : roll < 0.5 ? 'sports' : roll < 0.72 ? 'truck' : roll < 0.92 ? 'police' : 'geldtransporter';
+};
+
+const getOpenLanes = (state: GameState, spawnY: number, heat: number, playerLane: number): number[] => {
+  const openLanes: number[] = [];
+  const minGap = lerp(260, 160, heat);
+  const reactionDistance = lerp(420, 260, heat);
+  const avoidPlayerLane = heat < 0.7;
+
+  for (let lane = 0; lane < LANE_COUNT; lane++) {
+    if (avoidPlayerLane && lane === playerLane) {
+      const distToPlayer = Math.abs(spawnY - state.player.body.position.y);
+      if (distToPlayer < reactionDistance) continue;
+    }
+    let blocked = false;
+    for (const other of state.traffic) {
+      if (other.lane !== lane) continue;
+      if (Math.abs(other.body.position.y - spawnY) < minGap) {
+        blocked = true;
+        break;
+      }
+    }
+    if (!blocked) openLanes.push(lane);
+  }
+
+  return openLanes;
 };
 
 // ============================================================================
@@ -353,10 +407,12 @@ const main = (): void => {
     traffic: [],
     barriers: { left: leftBarrier, right: rightBarrier },
     cash: 0,
+    heat: 0,
     stars: 0,
-    starDecayTimer: 0,
-    lastCollisionTime: 0,
+    lastCollisionTime: performance.now(),
     lastBarrierDamageTime: 0,
+    playerIFrameTimer: 0,
+    lastHeatGainTime: performance.now(),
     boost: 100,
     scrollY: 0,
     spawnTimer: 0,
@@ -366,6 +422,7 @@ const main = (): void => {
     demoMode: true, // START IN DEMO MODE
     frameCount: 0,
     activeCollisions: new Set<number>(),
+    elapsedTime: 0,
     screenShake: 0,
     slowMo: 0,
   };
@@ -381,6 +438,7 @@ const main = (): void => {
       console.log('%c=== GAME STATUS ===', 'font-size: 14px; font-weight: bold');
       log('STATE', `Cash: $${state.cash.toLocaleString()}`);
       log('STATE', `Stars: ${state.stars}/5`);
+      log('STATE', `Heat: ${(state.heat * 100).toFixed(1)}%`);
       log('STATE', `Integrity: ${state.player.integrity.toFixed(1)}%`);
       log('STATE', `Boost: ${state.boost.toFixed(1)}%`);
       log('STATE', `Traffic count: ${state.traffic.length}`);
@@ -497,11 +555,35 @@ const update = (state: GameState, dt: number): void => {
     if (state.bustedTimer <= 0) {
       state.busted = false;
       state.player.integrity = 100;
+      state.heat = 0;
       state.stars = 0;
+      state.elapsedTime = 0;
+      state.lastCollisionTime = performance.now();
+      state.lastHeatGainTime = state.lastCollisionTime;
+      state.spawnTimer = 0.6;
+      state.pursuerSpawnTimer = 8 + Math.random() * 5;
+      for (const v of state.traffic) {
+        Matter.Composite.remove(state.engine.world, v.body);
+      }
+      state.traffic = [];
+      state.activeCollisions.clear();
       log('STATE', 'Respawned! Integrity restored, stars cleared');
     }
     return;
   }
+
+  const now = performance.now();
+  state.elapsedTime += stepDt;
+  state.heat = clamp01(state.heat + stepDt * 0.0035);
+  if (now - state.lastCollisionTime > 6000) {
+    state.heat = clamp01(state.heat - stepDt * 0.0015);
+  }
+  const newStars = Math.min(5, Math.floor(state.heat * 5 + 0.0001));
+  if (newStars !== state.stars) {
+    state.stars = newStars;
+    log('STAR', `⭐ Wanted level: ${state.stars}`);
+  }
+  state.playerIFrameTimer = Math.max(0, state.playerIFrameTimer - stepDt);
 
   // Get input (demo AI or manual)
   const currentInput = state.demoMode ? demoAI(state) : input;
@@ -523,36 +605,44 @@ const update = (state: GameState, dt: number): void => {
   applyDriveForces(body, targetSpeed, steer, PLAYER_DRIVE);
 
   // Spawn traffic AHEAD of player (negative Y = above player on screen)
+  const earlyPhase = state.elapsedTime < 30;
+  const spawnInterval = earlyPhase ? 2.8 : lerp(2.6, 0.55, state.heat);
+  const maxTraffic = earlyPhase ? 1 : Math.max(2, Math.round(lerp(3, 16, state.heat)));
+  const spawnDistance = lerp(720, 420, state.heat);
+
   state.spawnTimer -= stepDt;
   if (state.spawnTimer <= 0) {
-    state.spawnTimer = 0.6 + Math.random() * 0.6;
-    const types: VehicleType[] = [
-      'sedan', 'sedan', 'sedan', 'sedan',
-      'sports', 'sports',
-      'truck', 'truck',
-      'police',
-      'geldtransporter',
-    ];
-    const type = types[Math.floor(Math.random() * types.length)]!;
-    const lane = Math.floor(Math.random() * LANE_COUNT);
-    const x = getLaneX(lane);
-    const spawnY = body.position.y - 600 - Math.random() * 100;
-    const vehicle = createVehicle(state.engine, type, x, spawnY, lane);
-    state.traffic.push(vehicle);
+    state.spawnTimer = spawnInterval * (0.8 + Math.random() * 0.4);
+    if (state.traffic.length < maxTraffic) {
+      const playerLane = getNearestLane(body.position.x);
+      const spawnY = body.position.y - spawnDistance - Math.random() * 80;
+      const openLanes = getOpenLanes(state, spawnY, state.heat, playerLane);
+      if (openLanes.length === 0) {
+        state.spawnTimer = 0.2;
+      } else {
+        const lane = openLanes[Math.floor(Math.random() * openLanes.length)]!;
+        const x = getLaneX(lane);
+        const type = pickVehicleType(state.heat, state.elapsedTime);
+        const vehicle = createVehicle(state.engine, type, x, spawnY, lane);
+        state.traffic.push(vehicle);
+      }
+    } else {
+      state.spawnTimer = spawnInterval * 0.5;
+    }
   }
 
   // === PURSUER POLICE from BEHIND! ===
   state.pursuerSpawnTimer -= stepDt;
-  if (state.pursuerSpawnTimer <= 0 && state.stars > 0) {
-    // More pursuers with higher wanted level
-    state.pursuerSpawnTimer = 6 + Math.random() * 8 - state.stars * 1.5;
+  if (state.pursuerSpawnTimer <= 0 && state.heat > 0.25) {
+    const intensity = clamp01((state.heat - 0.25) / 0.75);
+    state.pursuerSpawnTimer = lerp(10, 4.5, intensity) + Math.random() * 2;
     const lane = Math.floor(Math.random() * LANE_COUNT);
     const x = getLaneX(lane);
     const spawnY = body.position.y + 700;
     const pursuer = createVehicle(state.engine, 'police', x, spawnY, lane);
     pursuer.isPursuer = true;
     pursuer.isChasing = true;
-    pursuer.targetSpeed = 12 + Math.random() * 3; // Fast pursuit!
+    pursuer.targetSpeed = lerp(10, 14, intensity) + Math.random() * 2;
     state.traffic.push(pursuer);
     log('SPAWN', `🚨 PURSUER POLICE #${pursuer.id} spawned BEHIND! [PURSUING]`);
   }
@@ -659,22 +749,6 @@ const update = (state: GameState, dt: number): void => {
     return true;
   });
 
-  // === STAR DECAY ===
-  // Stars decay after clean driving (no collisions for a period)
-  if (state.stars > 0) {
-    const now = performance.now();
-    const timeSinceCollision = (now - state.lastCollisionTime) / 1000;
-    // Decay times: 1 star=30s, 2 stars=45s, 3 stars=60s, 4 stars=90s, 5 stars=almost never
-    const decayTimes = [0, 30, 45, 60, 90, 300]; // Index by star level
-    const decayTime = decayTimes[state.stars] ?? 300;
-
-    if (timeSinceCollision > decayTime) {
-      state.stars--;
-      state.lastCollisionTime = now; // Reset timer for next star
-      log('STAR', `⭐ Star decayed! Now at ${state.stars} stars (clean for ${timeSinceCollision.toFixed(0)}s)`);
-    }
-  }
-
   // Arcade traction & angular control (pre-step clamp)
   applyArcadeTraction(body, stepDt, PLAYER_TRACTION);
   for (const v of state.traffic) {
@@ -708,6 +782,10 @@ const update = (state: GameState, dt: number): void => {
     state.bustedTimer = 2.5;
     const lostCash = Math.floor(state.cash * 0.3);
     state.cash -= lostCash;
+    state.heat = 0;
+    state.stars = 0;
+    state.elapsedTime = 0;
+    state.lastHeatGainTime = performance.now();
     log('BUSTED', `💀 BUSTED! Lost $${lostCash.toLocaleString()} in bribes`);
   }
 };
@@ -728,16 +806,14 @@ const handleCollisions = (state: GameState): void => {
     if (labels.includes('player') && labels.includes('barrier')) {
       const now = performance.now();
       const lateralSpeed = Math.abs(state.player.body.velocity.x);
-      if (lateralSpeed > 1 && now - state.lastBarrierDamageTime > 200) {
+      if (lateralSpeed > 1 && now - state.lastBarrierDamageTime > 200 && state.playerIFrameTimer <= 0) {
         const damage = Math.min(8, Math.max(0.5, (lateralSpeed - 1) * 1.2));
         state.player.integrity -= damage;
         state.lastBarrierDamageTime = now;
         state.lastCollisionTime = now;
+        applyHeatGain(state, 0.001, now);
+        state.playerIFrameTimer = 0.15;
         state.screenShake = Math.max(state.screenShake, Math.min(4, lateralSpeed));
-        if (state.stars < 1) {
-          state.stars = 1;
-          log('STAR', '⭐ Wanted level: 1 (hit barrier)');
-        }
         log('DAMAGE', `Player scraped barrier (-${damage.toFixed(1)}%)`);
       }
     }
@@ -756,7 +832,8 @@ const handleCollisions = (state: GameState): void => {
     if (!state.activeCollisions.has(vehicleId)) {
       const vehicle = state.traffic.find((v) => v.id === vehicleId);
       if (vehicle !== undefined) {
-        state.lastCollisionTime = performance.now(); // Reset star decay timer
+        const collisionTime = performance.now();
+        state.lastCollisionTime = collisionTime; // Reset star decay timer
 
         // === ENERGY-BASED COLLISION FEEL ===
         const playerBody = state.player.body;
@@ -787,13 +864,20 @@ const handleCollisions = (state: GameState): void => {
         const hitThreshold = 80;
         const slamThreshold = 160;
 
-        const basePlayerDamage = energy < tapThreshold ? 0 : energy < hitThreshold ? 3 : energy < slamThreshold ? 8 : 14;
-        const baseVehicleDamage = energy < tapThreshold ? 0 : energy < hitThreshold ? 12 : energy < slamThreshold ? 28 : 50;
+        const heatGain = energy < tapThreshold ? 0 : energy < hitThreshold ? 0.003 : energy < slamThreshold ? 0.006 : 0.012;
+        applyHeatGain(state, heatGain, collisionTime);
+
+        const basePlayerDamage = energy < tapThreshold ? 0 : energy < hitThreshold ? 2 : energy < slamThreshold ? 5 : 10;
+        const baseVehicleDamage = energy < tapThreshold ? 0 : energy < hitThreshold ? 10 : energy < slamThreshold ? 24 : 45;
 
         const directionMultiplier = isFrontal ? 0.25 : isSide ? 0.7 : isRear ? 1.0 : 0.5;
         const playerDamage = basePlayerDamage * directionMultiplier;
-        if (playerDamage > 0) {
+        if (playerDamage > 0 && state.playerIFrameTimer <= 0) {
           state.player.integrity -= playerDamage;
+          state.playerIFrameTimer = Math.max(
+            state.playerIFrameTimer,
+            energy >= slamThreshold ? 0.35 : energy >= hitThreshold ? 0.2 : 0.1
+          );
           log('DAMAGE', `💥 Player hit (-${playerDamage.toFixed(1)}%)`);
         }
 
@@ -885,13 +969,13 @@ const destroyVehicle = (state: GameState, vehicle: Vehicle): void => {
     log('DAMAGE', `🔧 +${config.repairDrop} repair from ${vehicle.type.toUpperCase()} (${oldIntegrity.toFixed(1)}% → ${state.player.integrity.toFixed(1)}%)`);
   }
 
-  // Star escalation for special vehicles
+  // Heat escalation for special vehicles
   if (vehicle.type === 'police') {
-    state.stars = Math.min(5, state.stars + 1);
-    log('STAR', `⭐ Wanted level: ${state.stars} (destroyed police car!)`);
+    applyHeatGain(state, 0.03, performance.now());
+    log('STAR', '⭐ Wanted level increased (destroyed police car!)');
   } else if (vehicle.type === 'geldtransporter') {
-    state.stars = Math.min(5, state.stars + 2);
-    log('STAR', `⭐⭐ Wanted level: ${state.stars} (HEIST! Robbed Geldtransporter!)`);
+    applyHeatGain(state, 0.05, performance.now());
+    log('STAR', '⭐⭐ Wanted level increased (HEIST!)');
   }
 
   log('DESTROY', `💥 ${vehicle.type.toUpperCase()} #${vehicle.id} WRECKED! (stays as obstacle)`);
