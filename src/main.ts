@@ -1,6 +1,8 @@
 import Matter from 'matter-js';
 import { VEHICLE_CONFIGS, type VehicleType } from './game/vehicles.ts';
 import { ROAD_WIDTH, ROAD_LEFT, ROAD_RIGHT, LANE_COUNT, LANE_WIDTH, BARRIER_WIDTH, getLaneX } from './game/road.ts';
+import { impactEnergy, impactTier } from './game/collision.ts';
+import { getOpenLanes } from './game/spawn.ts';
 import { createRng, parseSeed } from './utils/random.ts';
 
 // ============================================================================
@@ -254,14 +256,6 @@ const applyRoadBounds = (body: Matter.Body): void => {
   }
 };
 
-const impactEnergy = (a: Matter.Body, b: Matter.Body): number => {
-  const rvx = a.velocity.x - b.velocity.x;
-  const rvy = a.velocity.y - b.velocity.y;
-  const relSpeed = Math.hypot(rvx, rvy);
-  const reducedMass = (a.mass * b.mass) / (a.mass + b.mass);
-  return 0.5 * reducedMass * relSpeed * relSpeed;
-};
-
 const applyHeatGain = (state: GameState, amount: number, now: number): void => {
   if (amount <= 0) return;
   if (now - state.lastHeatGainTime < 250) return;
@@ -294,30 +288,6 @@ const pickVehicleType = (heat: number, elapsedTime: number): VehicleType => {
   return roll < 0.25 ? 'sedan' : roll < 0.5 ? 'sports' : roll < 0.72 ? 'truck' : roll < 0.92 ? 'police' : 'geldtransporter';
 };
 
-const getOpenLanes = (state: GameState, spawnY: number, heat: number, playerLane: number): number[] => {
-  const openLanes: number[] = [];
-  const minGap = lerp(260, 160, heat);
-  const reactionDistance = lerp(420, 260, heat);
-  const avoidPlayerLane = heat < 0.7;
-
-  for (let lane = 0; lane < LANE_COUNT; lane++) {
-    if (avoidPlayerLane && lane === playerLane) {
-      const distToPlayer = Math.abs(spawnY - state.player.body.position.y);
-      if (distToPlayer < reactionDistance) continue;
-    }
-    let blocked = false;
-    for (const other of state.traffic) {
-      if (other.lane !== lane) continue;
-      if (Math.abs(other.body.position.y - spawnY) < minGap) {
-        blocked = true;
-        break;
-      }
-    }
-    if (!blocked) openLanes.push(lane);
-  }
-
-  return openLanes;
-};
 
 // ============================================================================
 // VEHICLE CREATION
@@ -380,9 +350,9 @@ const main = (): void => {
   document.querySelectorAll('canvas').forEach((c) => c.remove());
 
   const canvas = document.createElement('canvas');
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
   canvas.style.display = 'block';
+  canvas.style.width = `${window.innerWidth}px`;
+  canvas.style.height = `${window.innerHeight}px`;
   document.body.appendChild(canvas);
 
   const ctx = canvas.getContext('2d');
@@ -391,10 +361,17 @@ const main = (): void => {
     return;
   }
 
-  window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-  });
+  const resizeCanvas = (): void => {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(window.innerWidth * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
 
   // Physics engine
   const engine = Matter.Engine.create();
@@ -511,7 +488,7 @@ const main = (): void => {
       accumulator -= fixedDt;
     }
 
-    render(ctx, state, canvas.width, canvas.height);
+    render(ctx, state, canvas.clientWidth, canvas.clientHeight);
 
     state.frameCount++;
     requestAnimationFrame(gameLoop);
@@ -643,7 +620,13 @@ const update = (state: GameState, dt: number): void => {
     if (state.traffic.length < maxTraffic) {
       const playerLane = getNearestLane(body.position.x);
       const spawnY = body.position.y - spawnDistance - randRange(0, 80);
-      const openLanes = getOpenLanes(state, spawnY, state.heat, playerLane);
+      const openLanes = getOpenLanes(
+        state.traffic.map((vehicle) => ({ lane: vehicle.lane, y: vehicle.body.position.y })),
+        spawnY,
+        state.heat,
+        playerLane,
+        body.position.y
+      );
       if (openLanes.length === 0) {
         state.spawnTimer = 0.2;
       } else {
@@ -890,23 +873,21 @@ const handleCollisions = (state: GameState): void => {
         const isSide = Math.abs(posY) < 30 && Math.abs(posX) > playerWidth * 0.3;
         const isRear = posY > 20;
 
-        const tapThreshold = 25;
-        const hitThreshold = 80;
-        const slamThreshold = 160;
-
-        const heatGain = energy < tapThreshold ? 0 : energy < hitThreshold ? 0.003 : energy < slamThreshold ? 0.006 : 0.012;
+        const tier = impactTier(energy);
+        const heatGain = tier === 'tap' ? 0 : tier === 'hit' ? 0.003 : tier === 'slam' ? 0.006 : 0.012;
         applyHeatGain(state, heatGain, collisionTime);
 
-        const basePlayerDamage = energy < tapThreshold ? 0 : energy < hitThreshold ? 2 : energy < slamThreshold ? 5 : 10;
-        const baseVehicleDamage = energy < tapThreshold ? 0 : energy < hitThreshold ? 10 : energy < slamThreshold ? 24 : 45;
+        const basePlayerDamage = tier === 'tap' ? 0 : tier === 'hit' ? 2 : tier === 'slam' ? 5 : 10;
+        const baseVehicleDamage = tier === 'tap' ? 0 : tier === 'hit' ? 10 : tier === 'slam' ? 24 : 45;
 
         const directionMultiplier = isFrontal ? 0.25 : isSide ? 0.7 : isRear ? 1.0 : 0.5;
         const playerDamage = basePlayerDamage * directionMultiplier;
         if (playerDamage > 0 && state.playerIFrameTimer <= 0) {
           state.player.integrity -= playerDamage;
+          const iFrameDuration = tier === 'crash' ? 0.35 : tier === 'slam' ? 0.2 : tier === 'hit' ? 0.1 : 0;
           state.playerIFrameTimer = Math.max(
             state.playerIFrameTimer,
-            energy >= slamThreshold ? 0.35 : energy >= hitThreshold ? 0.2 : 0.1
+            iFrameDuration
           );
           log('DAMAGE', `💥 Player hit (-${playerDamage.toFixed(1)}%)`);
         }
@@ -918,7 +899,7 @@ const handleCollisions = (state: GameState): void => {
           log('HIT', `🚗 ${vehicle.type.toUpperCase()} #${vehicle.id} -${vehicleDamage.toFixed(1)}%`);
         }
 
-        if (energy >= slamThreshold) {
+        if (tier === 'slam' || tier === 'crash') {
           state.slowMo = 0.2;
           state.screenShake = Math.max(state.screenShake, Math.min(6, energy / 40));
         }
@@ -1244,6 +1225,22 @@ const drawHUD = (ctx: CanvasRenderingContext2D, state: GameState, w: number, _h:
     ctx.fillStyle = i < state.stars ? '#f1c40f' : '#333';
     drawStar(ctx, w - 30 - i * 30, 65, 12, 6, 5);
   }
+
+  // Heat meter
+  const heatColor = state.heat < 0.33 ? '#2ecc71' : state.heat < 0.66 ? '#f39c12' : '#e74c3c';
+  const heatWidth = 140;
+  const heatX = w - 20 - heatWidth;
+  const heatY = 86;
+  ctx.fillStyle = '#222';
+  ctx.fillRect(heatX - 2, heatY - 2, heatWidth + 4, 14);
+  ctx.fillStyle = '#333';
+  ctx.fillRect(heatX, heatY, heatWidth, 10);
+  ctx.fillStyle = heatColor;
+  ctx.fillRect(heatX, heatY, heatWidth * clamp01(state.heat), 10);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`HEAT ${Math.round(state.heat * 100)}%`, w - 20, heatY + 10);
 
   ctx.textAlign = 'left';
 };

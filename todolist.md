@@ -8,9 +8,11 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 - Modular game path exists in `src/game/Game.ts` but still uses velocity overrides and hit-count damage.
 - Two physics stacks exist (`src/engine/physics` custom vs Matter wrappers in `src/game/physics.ts`).
 - Road constants are unified via `src/game/config/constants.ts`.
-- Canvas resize uses `setTransform` in `src/engine/render/canvas.ts`.
+- Canvas resize uses `setTransform` in `src/main.ts` and `src/engine/render/canvas.ts`.
 - Deterministic RNG is wired with `?seed=...`; tests exist for RNG.
-- Basic RNG test added in `tests/utils/random.test.ts`; fairness tests still pending.
+- Collision + spawn helpers moved to `src/game/collision.ts` and `src/game/spawn.ts`.
+- Tests cover RNG, impact severity tiers, and spawn fairness in `tests/game/`.
+- HUD now includes a heat meter for clarity.
 
 ## Plan (Feedback-Driven)
 ### Phase 0 - Alignment and Infrastructure
@@ -31,7 +33,7 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 
 ### Phase 3 - UX, Tests, and Validation
 - [x] HUD telegraphs for police/heists (basic alerts).
-- [ ] Add Vitest regression tests for spawn fairness and impact severity.
+- [x] Add Vitest regression tests for spawn fairness and impact severity.
 - [x] MCP test pass: run `npm run dev`, validate ramming feel, ramp, busted flow, and resize behavior.
 
 ## MCP Feedback Round 1 (Current Build)
@@ -40,10 +42,10 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 - Forward speed still aggressive; tune drive forces for smoother pacing.
 - Difficulty ramp and energy-based damage not implemented yet.
 
-## Next Fixes (Round 5)
-- [ ] Improve HUD clarity at higher heat (alerts, heat indicator, collision cue).
+## Next Fixes (Round 6)
+- [x] Improve HUD clarity at higher heat (alerts, heat indicator, collision cue).
 - [ ] Port traction + fixed timestep into `src/game/Game.ts` if switching to the modular path.
-- [ ] Add Vitest regression tests for spawn fairness and impact severity.
+- [ ] Tune collision damage/i-frames so integrity doesn't evaporate in early-medium heat.
 
 ## MCP Feedback Round 2 (Post Energy Damage)
 - Wrecked vehicles appear; collisions now trigger slow-mo and damage tiers.
@@ -64,3 +66,8 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 - `?seed=1234` reproduces a calm early phase and predictable ramp.
 - At ~60s: heat ~0.46, stars 2, traffic ~6; alerts fire for police spawns.
 - Integrity can still drop quickly under repeated collisions; tuning still needed.
+
+## MCP Feedback Round 6 (HUD + Fairness Tests)
+- Early phase: ~8s heat ~0.16, stars 0, traffic 1; integrity dipped under demo collisions.
+- At ~58s: heat ~0.62, stars 3, traffic 7; police-behind alert fired.
+- Integrity can fall to single digits under sustained rams; damage pacing still needs tuning.
