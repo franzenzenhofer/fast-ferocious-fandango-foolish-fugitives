@@ -11,6 +11,7 @@ import { createRng, parseSeed } from './utils/random.ts';
 
 type PoliceMode = 'shadow' | 'ram';
 type AIMode = 'lane' | 'weave' | 'block' | 'escort';
+type PowerUpType = 'repair' | 'shield' | 'turbo';
 
 interface Vehicle {
   id: number;
@@ -37,10 +38,20 @@ interface Vehicle {
   isWrecked: boolean; // Car is destroyed but stays as obstacle
 }
 
+interface PowerUp {
+  id: number;
+  type: PowerUpType;
+  x: number;
+  y: number;
+  ttl: number;
+  value: number;
+}
+
 interface GameState {
   engine: Matter.Engine;
   player: Vehicle;
   traffic: Vehicle[];
+  powerUps: PowerUp[];
   barriers: { left: Matter.Body; right: Matter.Body };
   cash: number;
   seed: number;
@@ -58,6 +69,8 @@ interface GameState {
   boost: number;
   boostActiveTimer: number;
   boostRechargeDelay: number;
+  playerShieldTimer: number;
+  powerUpSpawnTimer: number;
   scrollY: number;
   spawnTimer: number;
   pursuerSpawnTimer: number; // Timer for spawning police from behind
@@ -119,6 +132,7 @@ declare global {
 const input = { left: false, right: false, boost: false, brake: false };
 let vehicleId = 0;
 let rng = Math.random;
+let powerUpId = 0;
 
 // ============================================================================
 // ARCADE HANDLING HELPERS
@@ -191,6 +205,8 @@ const BOOST_DURATION = 1.4;
 const BOOST_RECHARGE_DELAY = 1.2;
 const BOOST_RECHARGE_RATE = 28;
 const BOOST_SPEED = 8;
+const SHIELD_DURATION = 4.5;
+const POWERUP_TTL = 10;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -326,6 +342,58 @@ const getDefaultAIMode = (type: VehicleType): AIMode => {
     default:
       return 'lane';
   }
+};
+
+const spawnPowerUp = (
+  state: GameState,
+  type: PowerUpType,
+  x: number,
+  y: number,
+  value: number,
+  ttl = POWERUP_TTL
+): void => {
+  state.powerUps.push({
+    id: powerUpId++,
+    type,
+    x,
+    y,
+    ttl,
+    value,
+  });
+};
+
+const collectPowerUp = (state: GameState, powerUp: PowerUp): void => {
+  if (powerUp.type === 'repair') {
+    const oldIntegrity = state.player.integrity;
+    state.player.integrity = Math.min(100, state.player.integrity + powerUp.value);
+    log('DAMAGE', `🔧 +${powerUp.value} repair (${oldIntegrity.toFixed(1)}% → ${state.player.integrity.toFixed(1)}%)`);
+  } else if (powerUp.type === 'shield') {
+    state.playerShieldTimer = Math.max(state.playerShieldTimer, SHIELD_DURATION);
+    log('STATE', '🛡️ SHIELD ACTIVATED');
+  } else {
+    state.boost = BOOST_MAX;
+    if (state.boostActiveTimer <= 0) {
+      state.boostRechargeDelay = 0;
+    }
+    log('STATE', '⚡ TURBO CHARGED');
+  }
+};
+
+const updatePowerUps = (state: GameState, stepDt: number): void => {
+  const playerPos = state.player.body.position;
+  state.powerUps = state.powerUps.filter((powerUp) => {
+    powerUp.ttl -= stepDt;
+    if (powerUp.ttl <= 0) return false;
+    if (powerUp.y - playerPos.y > 900) return false;
+    if (powerUp.y - playerPos.y < -1200) return false;
+    const dx = powerUp.x - playerPos.x;
+    const dy = powerUp.y - playerPos.y;
+    if (dx * dx + dy * dy < 900) {
+      collectPowerUp(state, powerUp);
+      return false;
+    }
+    return true;
+  });
 };
 
 const isLaneBlocked = (state: GameState, lane: number, y: number, minGap: number, ignoreId: number): boolean => {
@@ -585,6 +653,7 @@ const main = (): void => {
     engine,
     player,
     traffic: [],
+    powerUps: [],
     barriers: { left: leftBarrier, right: rightBarrier },
     cash: 0,
     seed,
@@ -597,6 +666,8 @@ const main = (): void => {
     boost: BOOST_MAX,
     boostActiveTimer: 0,
     boostRechargeDelay: 0,
+    playerShieldTimer: 0,
+    powerUpSpawnTimer: randRange(6, 10),
     scrollY: 0,
     spawnTimer: 0,
     pursuerSpawnTimer: randRange(8, 13), // First pursuer after 8-13 seconds
@@ -767,6 +838,9 @@ const update = (state: GameState, dt: number): void => {
       state.player.prevAngle = state.player.body.angle;
       state.hitFlash = 0;
       state.controlHintTimer = 6;
+      state.playerShieldTimer = 0;
+      state.powerUps = [];
+      state.powerUpSpawnTimer = randRange(6, 10);
       log('STATE', 'Respawned! Integrity restored, stars cleared');
     }
     return;
@@ -786,6 +860,7 @@ const update = (state: GameState, dt: number): void => {
   state.playerIFrameTimer = Math.max(0, state.playerIFrameTimer - stepDt);
   state.alertTimer = Math.max(0, state.alertTimer - stepDt);
   state.hitFlash = Math.max(0, state.hitFlash - stepDt * 4);
+  state.playerShieldTimer = Math.max(0, state.playerShieldTimer - stepDt);
   if (!state.demoMode && (input.left || input.right || input.boost || input.brake)) {
     state.controlHintTimer = 0;
   } else {
@@ -860,6 +935,29 @@ const update = (state: GameState, dt: number): void => {
     } else {
       state.spawnTimer = spawnInterval * 0.5;
     }
+  }
+
+  // Spawn power-ups (time-based)
+  state.powerUpSpawnTimer -= stepDt;
+  if (state.powerUpSpawnTimer <= 0) {
+    state.powerUpSpawnTimer = randRange(6, 12);
+    const spawnY = body.position.y - lerp(520, 380, state.heat) - randRange(0, 120);
+    let lane = randInt(LANE_COUNT);
+    if (lane < 0 || lane >= LANE_COUNT) lane = getNearestLane(body.position.x);
+    const tries = 3;
+    for (let i = 0; i < tries; i++) {
+      const pick = randInt(LANE_COUNT);
+      if (!isLaneBlocked(state, pick, spawnY, 140, -1)) {
+        lane = pick;
+        break;
+      }
+    }
+    const x = getLaneX(lane);
+    const roll = random();
+    const type: PowerUpType = roll < 0.4 ? 'repair' : roll < 0.7 ? 'turbo' : 'shield';
+    const value = type === 'repair' ? 12 : 0;
+    spawnPowerUp(state, type, x, spawnY, value);
+    log('SPAWN', `✨ ${type.toUpperCase()} power-up spawned`);
   }
 
   // === PURSUER POLICE from BEHIND! ===
@@ -1045,6 +1143,9 @@ const update = (state: GameState, dt: number): void => {
   // Handle collisions
   handleCollisions(state);
 
+  // Power-ups
+  updatePowerUps(state, stepDt);
+
   // Check for bust
   if (state.player.integrity <= 0) {
     state.busted = true;
@@ -1077,7 +1178,8 @@ const handleCollisions = (state: GameState): void => {
       const now = performance.now();
       const lateralSpeed = Math.abs(state.player.body.velocity.x);
       if (lateralSpeed > 1 && now - state.lastBarrierDamageTime > 200 && state.playerIFrameTimer <= 0) {
-        const damage = Math.min(7, Math.max(0.5, (lateralSpeed - 1) * 1.0));
+        const shieldMultiplier = state.playerShieldTimer > 0 ? 0.35 : 1;
+        const damage = Math.min(7, Math.max(0.5, (lateralSpeed - 1) * 1.0)) * shieldMultiplier;
         state.player.integrity -= damage;
         state.lastBarrierDamageTime = now;
         state.lastCollisionTime = now;
@@ -1140,7 +1242,8 @@ const handleCollisions = (state: GameState): void => {
 
         const directionMultiplier = isFrontal ? 0.25 : isSide ? 0.7 : isRear ? 1.0 : 0.5;
         const heatScale = lerp(0.65, 1.0, state.heat);
-        const playerDamage = basePlayerDamage * directionMultiplier * heatScale;
+        const shieldMultiplier = state.playerShieldTimer > 0 ? 0.35 : 1;
+        const playerDamage = basePlayerDamage * directionMultiplier * heatScale * shieldMultiplier;
         if (playerDamage > 0 && state.playerIFrameTimer <= 0) {
           state.player.integrity -= playerDamage;
           const iFrameDuration = tier === 'crash' ? 0.5 : tier === 'slam' ? 0.35 : tier === 'hit' ? 0.2 : 0;
@@ -1236,9 +1339,20 @@ const destroyVehicle = (state: GameState, vehicle: Vehicle): void => {
 
   // Repair drop
   if (config.repairDrop > 0) {
-    const oldIntegrity = state.player.integrity;
-    state.player.integrity = Math.min(100, state.player.integrity + config.repairDrop);
-    log('DAMAGE', `🔧 +${config.repairDrop} repair from ${vehicle.type.toUpperCase()} (${oldIntegrity.toFixed(1)}% → ${state.player.integrity.toFixed(1)}%)`);
+    spawnPowerUp(state, 'repair', vehicle.body.position.x, vehicle.body.position.y, config.repairDrop);
+    log('DAMAGE', `🔧 Repair drop from ${vehicle.type.toUpperCase()}`);
+  }
+
+  // Power-up drops
+  const dropRoll = random();
+  if (vehicle.type === 'police' && dropRoll < 0.35) {
+    spawnPowerUp(state, 'shield', vehicle.body.position.x, vehicle.body.position.y, 0);
+  } else if (vehicle.type === 'sports' && dropRoll < 0.2) {
+    spawnPowerUp(state, 'turbo', vehicle.body.position.x, vehicle.body.position.y, 0);
+  } else if (vehicle.type === 'truck' && dropRoll < 0.18) {
+    spawnPowerUp(state, 'shield', vehicle.body.position.x, vehicle.body.position.y, 0);
+  } else if (vehicle.type === 'geldtransporter' && dropRoll < 0.6) {
+    spawnPowerUp(state, 'turbo', vehicle.body.position.x, vehicle.body.position.y, 0);
   }
 
   // Heat escalation for special vehicles
@@ -1308,6 +1422,13 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     for (let y = offset - totalLen; y < h + totalLen; y += totalLen) {
       ctx.fillRect(laneX - 1.5, y, 3, dashLen);
     }
+  }
+
+  // Power-ups
+  for (const powerUp of state.powerUps) {
+    const screenY = playerScreenY + (powerUp.y - playerPos.y);
+    const screenX = cx + powerUp.x;
+    drawPowerUp(ctx, powerUp, screenX, screenY);
   }
 
   // Draw traffic relative to player position
@@ -1555,6 +1676,39 @@ const drawVehicle = (ctx: CanvasRenderingContext2D, v: Vehicle, screenX: number,
   ctx.restore();
 };
 
+const drawPowerUp = (ctx: CanvasRenderingContext2D, powerUp: PowerUp, screenX: number, screenY: number): void => {
+  const alpha = clamp01(powerUp.ttl / 1.2);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(screenX, screenY);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(-10, -10, 20, 20);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-10, -10, 20, 20);
+
+  if (powerUp.type === 'repair') {
+    ctx.fillStyle = '#3df27a';
+    ctx.fillRect(-3, -8, 6, 16);
+    ctx.fillRect(-8, -3, 16, 6);
+  } else if (powerUp.type === 'shield') {
+    ctx.fillStyle = '#46d9ff';
+    ctx.beginPath();
+    ctx.arc(0, -2, 7, Math.PI, 0);
+    ctx.lineTo(6, 6);
+    ctx.lineTo(-6, 6);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.fillStyle = '#ffd447';
+    ctx.fillRect(-2, -8, 4, 6);
+    ctx.fillRect(-4, -2, 6, 6);
+    ctx.fillRect(0, 2, 4, 6);
+  }
+
+  ctx.restore();
+};
+
 const drawHUD = (ctx: CanvasRenderingContext2D, state: GameState, w: number): void => {
   // Integrity bar
   ctx.fillStyle = '#222';
@@ -1580,6 +1734,18 @@ const drawHUD = (ctx: CanvasRenderingContext2D, state: GameState, w: number): vo
   const boostColor = boostActive ? '#ffd447' : boostReady ? '#3df27a' : '#00bfff';
   ctx.fillStyle = boostColor;
   ctx.fillRect(20, 54, 120 * (state.boost / BOOST_MAX), 12);
+
+  // Shield bar
+  if (state.playerShieldTimer > 0) {
+    const shieldWidth = 120;
+    const shieldPct = clamp01(state.playerShieldTimer / SHIELD_DURATION);
+    ctx.fillStyle = '#222';
+    ctx.fillRect(18, 72, shieldWidth + 4, 10);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(20, 74, shieldWidth, 6);
+    ctx.fillStyle = '#46d9ff';
+    ctx.fillRect(20, 74, shieldWidth * shieldPct, 6);
+  }
 
   // Cash
   ctx.fillStyle = '#ffd700';
