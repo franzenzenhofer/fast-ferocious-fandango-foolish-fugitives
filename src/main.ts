@@ -853,6 +853,7 @@ const handleCollisions = (state: GameState): void => {
     if (!state.activeCollisions.has(vehicleId)) {
       const vehicle = state.traffic.find((v) => v.id === vehicleId);
       if (vehicle !== undefined) {
+        const canDamageVehicle = !vehicle.isWrecked;
         const collisionTime = performance.now();
         state.lastCollisionTime = collisionTime; // Reset star decay timer
 
@@ -902,7 +903,7 @@ const handleCollisions = (state: GameState): void => {
         }
 
         const vehicleDamage = baseVehicleDamage * (isFrontal ? 1.2 : 1);
-        if (vehicleDamage > 0) {
+        if (canDamageVehicle && vehicleDamage > 0) {
           vehicle.integrity = Math.max(0, vehicle.integrity - vehicleDamage);
           vehicle.hits = Math.min(vehicle.hits + 1, 6);
           log('HIT', `🚗 ${vehicle.type.toUpperCase()} #${vehicle.id} -${vehicleDamage.toFixed(1)}%`);
@@ -952,7 +953,7 @@ const handleCollisions = (state: GameState): void => {
           });
         }
 
-        if (vehicle.integrity <= 0) {
+        if (canDamageVehicle && vehicle.integrity <= 0) {
           log('HIT', `🚗 ${vehicle.type.toUpperCase()} #${vehicle.id} wrecked`);
           if (vehicle.type === 'geldtransporter' || vehicle.type === 'police') {
             state.slowMo = 0.3;
@@ -972,6 +973,7 @@ const handleCollisions = (state: GameState): void => {
 };
 
 const destroyVehicle = (state: GameState, vehicle: Vehicle): void => {
+  if (vehicle.isWrecked) return;
   const config = VEHICLE_CONFIGS[vehicle.type];
   const [minCash, maxCash] = config.cashDrop;
 
