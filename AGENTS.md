@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Golden Goal
-Retro chaos that still feels fair: collisions are readable and push cars sideways, skillful ramming matters, difficulty ramps from 1 car to chaos, and runs never end (BUSTED loop).
+A cool, fun-to-play arcade chase with great graphics: rams feel satisfying and fair, the ramp keeps players hooked from 1 car to chaos, and the BUSTED loop keeps runs going without frustration.
 
 ## Physics Stack
 - Primary runtime uses Matter.js directly in `src/main.ts`.

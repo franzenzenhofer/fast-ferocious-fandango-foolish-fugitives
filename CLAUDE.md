@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Current State**: `src/main.ts` is the canonical runtime (Matter.js). The modular architecture in `briefing.md` and `src/game/Game.ts` is legacy/experimental until an intentional migration.
 
 ## Golden Goal
-Retro chaos that still feels fair: collisions are readable and push cars sideways, skillful ramming matters, difficulty ramps from 1 car to chaos, and runs never end (BUSTED loop).
+A cool, fun-to-play arcade chase with great graphics: rams feel satisfying and fair, the ramp keeps players hooked from 1 car to chaos, and the BUSTED loop keeps runs going without frustration.
 
 ## Build Commands (Once TypeScript Project Exists)
 
