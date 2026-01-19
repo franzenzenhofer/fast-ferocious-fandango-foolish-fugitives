@@ -1,6 +1,6 @@
-import Matter from 'matter-js';
+import * as Matter from 'matter-js';
 
-const { Engine, World, Bodies, Body, Events, Composite } = Matter;
+const { Engine, Bodies, Body, Events, Composite } = Matter;
 
 export type PhysicsEngine = Matter.Engine;
 export type PhysicsBody = Matter.Body;

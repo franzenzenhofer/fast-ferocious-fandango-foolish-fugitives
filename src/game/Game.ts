@@ -1,5 +1,5 @@
-import Matter from 'matter-js';
-import { createPhysicsEngine, stepPhysics, createRectBody, addBody, removeBody, setVelocity, onCollision } from './physics.ts';
+import * as Matter from 'matter-js';
+import { createPhysicsEngine, stepPhysics, createRectBody, addBody, removeBody, setVelocity } from './physics.ts';
 import type { Vehicle, VehicleType } from './vehicles.ts';
 import { VEHICLE_CONFIGS, createVehicle } from './vehicles.ts';
 import { ROAD_LEFT, ROAD_RIGHT, BARRIER_WIDTH, getLaneX, fx_drawRoad } from './road.ts';
@@ -20,6 +20,8 @@ export interface GameState {
   bustedTimer: number;
   starDecayTimer: number;
 }
+
+type EngineWithPairs = Omit<Matter.Engine, 'pairs'> & { pairs: { list: Matter.Pair[] } };
 
 interface Pickup {
   x: number;
@@ -83,7 +85,7 @@ export const updateGame = (state: GameState, input: InputState, dt: number): voi
     return;
   }
   updatePlayer(state, input, dt);
-  updateTraffic(state, dt);
+  updateTraffic(state);
   spawnTraffic(state, dt);
   updatePickups(state, dt);
   stepPhysics(state.engine, dt);
@@ -111,7 +113,7 @@ const updatePlayer = (state: GameState, input: InputState, dt: number): void => 
 
 const getPlayerSpeed = (state: GameState): number => Math.abs(state.player.body.velocity.y);
 
-const updateTraffic = (state: GameState, dt: number): void => {
+const updateTraffic = (state: GameState): void => {
   const playerY = state.player.body.position.y;
   state.traffic = state.traffic.filter((v) => {
     const dy = v.body.position.y - playerY;
@@ -130,7 +132,8 @@ const spawnTraffic = (state: GameState, dt: number): void => {
   if (state.spawnTimer > 0) return;
   state.spawnTimer = 0.8 + Math.random() * 1.2;
   const types: VehicleType[] = ['sedan', 'sedan', 'sports', 'truck'];
-  const type = types[Math.floor(Math.random() * types.length)]!;
+  const type = types[Math.floor(Math.random() * types.length)];
+  if (!type) return;
   const lane = Math.floor(Math.random() * 4);
   const config = VEHICLE_CONFIGS[type];
   const x = getLaneX(lane);
@@ -165,7 +168,7 @@ const updatePickups = (state: GameState, dt: number): void => {
 };
 
 const handleCollisions = (state: GameState): void => {
-  const pairs = state.engine.pairs.list;
+  const pairs = (state.engine as EngineWithPairs).pairs.list;
   for (const pair of pairs) {
     if (!pair.isActive) continue;
     const labels = [pair.bodyA.label, pair.bodyB.label];

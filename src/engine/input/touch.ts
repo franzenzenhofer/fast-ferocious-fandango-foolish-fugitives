@@ -9,14 +9,12 @@ export interface TouchManager {
 export const createTouchManager = (canvas: HTMLCanvasElement): TouchManager => {
   let state: InputState = DEFAULT_INPUT;
   let touchStartX = 0;
-  let touchStartY = 0;
 
   const onTouchStart = (e: TouchEvent): void => {
     e.preventDefault();
     const touch = e.touches[0];
     if (touch === undefined) return;
     touchStartX = touch.clientX;
-    touchStartY = touch.clientY;
     const rect = canvas.getBoundingClientRect();
     const relX = touch.clientX - rect.left;
     state = { ...state, up: true, boost: relX > rect.width * 0.7 };

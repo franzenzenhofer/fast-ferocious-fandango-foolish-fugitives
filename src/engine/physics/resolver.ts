@@ -44,11 +44,12 @@ export const resolveContact = (contact: Contact): ResolutionResult => {
 
 export const resolveAllContacts = (bodies: readonly Body[], contacts: readonly Contact[]): Body[] => {
   const bodyMap = new Map<number, Body>();
-  bodies.forEach(b => bodyMap.set(b.id, b));
+  bodies.forEach((body) => bodyMap.set(body.id, body));
 
   for (const contact of contacts) {
-    const a = bodyMap.get(contact.bodyA.id)!;
-    const b = bodyMap.get(contact.bodyB.id)!;
+    const a = bodyMap.get(contact.bodyA.id);
+    const b = bodyMap.get(contact.bodyB.id);
+    if (!a || !b) continue;
     const result = resolveContact({ ...contact, bodyA: a, bodyB: b });
     bodyMap.set(result.bodyA.id, result.bodyA);
     bodyMap.set(result.bodyB.id, result.bodyB);

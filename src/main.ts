@@ -1,4 +1,4 @@
-import Matter from 'matter-js';
+import * as Matter from 'matter-js';
 import { VEHICLE_CONFIGS, type VehicleType } from './game/vehicles.ts';
 import { ROAD_WIDTH, ROAD_LEFT, ROAD_RIGHT, LANE_COUNT, LANE_WIDTH, BARRIER_WIDTH, getLaneX } from './game/road.ts';
 import { impactEnergy, impactTier } from './game/collision.ts';
@@ -56,6 +56,8 @@ interface GameState {
   screenShake: number;
   slowMo: number;
 }
+
+type EngineWithPairs = Omit<Matter.Engine, 'pairs'> & { pairs: { list: Matter.Pair[] } };
 
 // ============================================================================
 // LOGGING SYSTEM
@@ -296,7 +298,6 @@ const pickVehicleType = (heat: number, elapsedTime: number): VehicleType => {
 const createVehicle = (engine: Matter.Engine, type: VehicleType, x: number, y: number, lane: number): Vehicle => {
   const config = VEHICLE_CONFIGS[type];
   // MAXIMUM CHAOS PHYSICS - cars get THROWN around and ROTATE!
-  const isPlayer = type === 'player';
   const body = Matter.Bodies.rectangle(x, y, config.width, config.height, {
     friction: 0.08, // Low friction = cars slide
     frictionAir: 0.008, // Low air drag = momentum carries
@@ -347,7 +348,9 @@ const main = (): void => {
   console.log('%cPress D to toggle DEMO MODE | Check window.GAME for debug access', 'color: #888');
 
   // Clean up any existing canvases
-  document.querySelectorAll('canvas').forEach((c) => c.remove());
+  document.querySelectorAll('canvas').forEach((c) => {
+    c.remove();
+  });
 
   const canvas = document.createElement('canvas');
   canvas.style.display = 'block';
@@ -432,11 +435,11 @@ const main = (): void => {
   // Debug access
   window.GAME = {
     state,
-    toggleDemo: () => {
+    toggleDemo: (): void => {
       state.demoMode = !state.demoMode;
       log('DEMO', state.demoMode ? 'Demo mode ENABLED - AI driving' : 'Demo mode DISABLED - Manual control');
     },
-    getStatus: () => {
+    getStatus: (): void => {
       console.log('%c=== GAME STATUS ===', 'font-size: 14px; font-weight: bold');
       log('STATE', `Cash: $${state.cash.toLocaleString()}`);
       log('STATE', `Seed: ${state.seed}`);
@@ -630,13 +633,17 @@ const update = (state: GameState, dt: number): void => {
       if (openLanes.length === 0) {
         state.spawnTimer = 0.2;
       } else {
-        const lane = openLanes[randInt(openLanes.length)]!;
-        const x = getLaneX(lane);
-        const type = pickVehicleType(state.heat, state.elapsedTime);
-        const vehicle = createVehicle(state.engine, type, x, spawnY, lane);
-        state.traffic.push(vehicle);
-        if (type === 'police') triggerAlert(state, 'POLICE AHEAD', '#ff4444');
-        if (type === 'geldtransporter') triggerAlert(state, 'HEIST TARGET', '#ffd700');
+        const lane = openLanes[randInt(openLanes.length)];
+        if (lane === undefined) {
+          state.spawnTimer = 0.2;
+        } else {
+          const x = getLaneX(lane);
+          const type = pickVehicleType(state.heat, state.elapsedTime);
+          const vehicle = createVehicle(state.engine, type, x, spawnY, lane);
+          state.traffic.push(vehicle);
+          if (type === 'police') triggerAlert(state, 'POLICE AHEAD', '#ff4444');
+          if (type === 'geldtransporter') triggerAlert(state, 'HEIST TARGET', '#ffd700');
+        }
       }
     } else {
       state.spawnTimer = spawnInterval * 0.5;
@@ -716,7 +723,7 @@ const update = (state: GameState, dt: number): void => {
       let steerForce = 0;
 
       // Police/chasers pursue aggressively
-      if (v.isChasing || (v.hits > 0 && !v.isChasing && random() < 0.5)) {
+      if (v.isChasing || (v.hits > 0 && random() < 0.5)) {
         if (v.hits > 0 && !v.isChasing) {
           v.isChasing = true;
           log('HIT', `🔥 ${v.type.toUpperCase()} #${v.id} is now ANGRY!`);
@@ -811,7 +818,8 @@ const handleCollisions = (state: GameState): void => {
   const currentCollisions = new Set<number>();
 
   // Use Matter.js collision pairs (works because we use velocity-based movement)
-  for (const pair of state.engine.pairs.list) {
+  const pairs = (state.engine as EngineWithPairs).pairs.list;
+  for (const pair of pairs) {
     if (!pair.isActive) continue;
     const labels = [pair.bodyA.label, pair.bodyB.label];
 
@@ -1055,7 +1063,7 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
   drawVehicle(ctx, state.player, cx + state.player.body.position.x, playerScreenY);
 
   // HUD
-  drawHUD(ctx, state, w, h);
+  drawHUD(ctx, state, w);
 
   if (state.alertTimer > 0) {
     ctx.save();
@@ -1192,7 +1200,7 @@ const drawVehicle = (ctx: CanvasRenderingContext2D, v: Vehicle, screenX: number,
   ctx.restore();
 };
 
-const drawHUD = (ctx: CanvasRenderingContext2D, state: GameState, w: number, _h: number): void => {
+const drawHUD = (ctx: CanvasRenderingContext2D, state: GameState, w: number): void => {
   // Integrity bar
   ctx.fillStyle = '#222';
   ctx.fillRect(18, 18, 204, 28);

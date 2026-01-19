@@ -60,8 +60,9 @@ export const detectAllCollisions = (bodies: readonly Body[]): Contact[] => {
   const contacts: Contact[] = [];
   for (let i = 0; i < bodies.length; i++) {
     for (let j = i + 1; j < bodies.length; j++) {
-      const a = bodies[i]!;
-      const b = bodies[j]!;
+      const a = bodies[i];
+      const b = bodies[j];
+      if (!a || !b) continue;
       if (a.isStatic && b.isStatic) continue;
       const contact = detectCollision(a, b);
       if (contact !== null) contacts.push(contact);
