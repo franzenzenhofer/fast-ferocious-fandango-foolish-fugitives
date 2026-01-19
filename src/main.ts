@@ -235,6 +235,7 @@ const lerpAngle = (a: number, b: number, t: number): number => {
   const delta = Math.atan2(Math.sin(b - a), Math.cos(b - a));
   return a + delta * t;
 };
+const snap = (value: number): number => Math.round(value);
 const normalizeHex = (hex: string): string => {
   const cleaned = hex.replace('#', '');
   if (cleaned.length === 3) {
@@ -1456,14 +1457,14 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     ctx.translate(shakeX, shakeY);
   }
 
-  const cx = w / 2;
+  const cx = snap(w / 2);
   const clampedAlpha = clamp01(alpha);
   const playerPos = {
     x: lerp(state.player.prevPosition.x, state.player.body.position.x, clampedAlpha),
     y: lerp(state.player.prevPosition.y, state.player.body.position.y, clampedAlpha),
   };
   const playerAngle = lerpAngle(state.player.prevAngle, state.player.body.angle, clampedAlpha);
-  const playerScreenY = h * 0.65;
+  const playerScreenY = snap(h * 0.65);
 
   // Clear with grass
   ctx.fillStyle = '#228b22';
@@ -1495,8 +1496,8 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
 
   // Power-ups
   for (const powerUp of state.powerUps) {
-    const screenY = playerScreenY + (powerUp.y - playerPos.y);
-    const screenX = cx + powerUp.x;
+    const screenY = snap(playerScreenY + (powerUp.y - playerPos.y));
+    const screenX = snap(cx + powerUp.x);
     drawPowerUp(ctx, powerUp, screenX, screenY);
   }
 
@@ -1507,13 +1508,13 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
       y: lerp(v.prevPosition.y, v.body.position.y, clampedAlpha),
     };
     const trafficAngle = lerpAngle(v.prevAngle, v.body.angle, clampedAlpha);
-    const screenY = playerScreenY + (trafficPos.y - playerPos.y);
-    const screenX = cx + trafficPos.x;
+    const screenY = snap(playerScreenY + (trafficPos.y - playerPos.y));
+    const screenX = snap(cx + trafficPos.x);
     drawVehicle(ctx, v, screenX, screenY, trafficAngle);
   }
 
   // Draw player
-  drawVehicle(ctx, state.player, cx + playerPos.x, playerScreenY, playerAngle);
+  drawVehicle(ctx, state.player, snap(cx + playerPos.x), playerScreenY, playerAngle);
 
   // HUD
   drawHUD(ctx, state, w);
@@ -1603,9 +1604,11 @@ const drawVehicle = (ctx: CanvasRenderingContext2D, v: Vehicle, screenX: number,
   ctx.translate(screenX, screenY);
   ctx.rotate(angle);
 
-  // Shadow (bigger for wrecks)
-  ctx.fillStyle = v.isWrecked ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.28)';
-  ctx.fillRect(-hw + 4, -hh + 5, bodyW, bodyH);
+  // Shadow (subtle to avoid ghosting)
+  const shadowOffsetX = v.isWrecked ? 3 : 2;
+  const shadowOffsetY = v.isWrecked ? 4 : 3;
+  ctx.fillStyle = v.isWrecked ? 'rgba(0,0,0,0.38)' : 'rgba(0,0,0,0.2)';
+  ctx.fillRect(-hw + shadowOffsetX, -hh + shadowOffsetY, bodyW, bodyH);
 
   // Body - BLACK and BURNING if wrecked
   if (v.isWrecked) {
