@@ -9,6 +9,8 @@ import { createRng, parseSeed } from './utils/random.ts';
 // TYPES
 // ============================================================================
 
+type PoliceMode = 'shadow' | 'ram';
+
 interface Vehicle {
   id: number;
   type: VehicleType;
@@ -19,6 +21,11 @@ interface Vehicle {
   spawnTime: number;
   prevPosition: { x: number; y: number };
   prevAngle: number;
+  policeMode: PoliceMode;
+  policeModeTimer: number;
+  ramCooldown: number;
+  spawnGraceTimer: number;
+  sidePreference: number;
   targetLane: number;
   laneChangeTimer: number;
   isChasing: boolean;
@@ -285,6 +292,65 @@ const applyRoadBounds = (body: Matter.Body, spring = 0.002, margin = 10): void =
   }
 };
 
+const updatePoliceTimers = (vehicle: Vehicle, stepDt: number): void => {
+  vehicle.spawnGraceTimer = Math.max(0, vehicle.spawnGraceTimer - stepDt);
+  vehicle.ramCooldown = Math.max(0, vehicle.ramCooldown - stepDt);
+  vehicle.policeModeTimer = Math.max(0, vehicle.policeModeTimer - stepDt);
+};
+
+const updatePoliceMode = (vehicle: Vehicle): void => {
+  if (vehicle.policeModeTimer > 0) return;
+  const wantsRam = vehicle.spawnGraceTimer <= 0 && vehicle.ramCooldown <= 0 && random() < 0.4;
+  vehicle.policeMode = wantsRam ? 'ram' : 'shadow';
+  vehicle.policeModeTimer = randRange(1.6, 3.2);
+  vehicle.sidePreference = random() < 0.5 ? -1 : 1;
+};
+
+const getPoliceSteer = (state: GameState, vehicle: Vehicle, relY: number): number => {
+  const playerX = state.player.body.position.x;
+  const playerVx = state.player.body.velocity.x;
+  const leadTime = 0.35;
+  const predictedX = playerX + playerVx * leadTime;
+
+  const safeLeft = ROAD_LEFT + 18;
+  const safeRight = ROAD_RIGHT - 18;
+  let desiredX = predictedX + vehicle.sidePreference * LANE_WIDTH * 0.6;
+  if (desiredX < safeLeft || desiredX > safeRight) {
+    vehicle.sidePreference *= -1;
+    desiredX = predictedX + vehicle.sidePreference * LANE_WIDTH * 0.6;
+  }
+
+  let steerForce = 0;
+  if (vehicle.policeMode === 'ram' && vehicle.spawnGraceTimer <= 0 && vehicle.ramCooldown <= 0) {
+    const ramTargetX = clamp(predictedX, safeLeft, safeRight);
+    steerForce = clamp((ramTargetX - vehicle.body.position.x) * 0.04, -1.1, 1.1);
+  } else {
+    steerForce = clamp((desiredX - vehicle.body.position.x) * 0.02, -0.6, 0.6);
+  }
+
+  if (Math.abs(relY) < 70) {
+    steerForce *= 0.5;
+  }
+  if (vehicle.spawnGraceTimer > 0) {
+    steerForce *= 0.35;
+  }
+
+  const dx = playerX - vehicle.body.position.x;
+  if (
+    vehicle.policeMode === 'ram' &&
+    vehicle.spawnGraceTimer <= 0 &&
+    vehicle.ramCooldown <= 0 &&
+    Math.abs(dx) < 25 &&
+    Math.abs(relY) < 90
+  ) {
+    vehicle.ramCooldown = 2.2;
+    vehicle.policeMode = 'shadow';
+    vehicle.policeModeTimer = randRange(2.0, 3.2);
+  }
+
+  return steerForce;
+};
+
 const applyHeatGain = (state: GameState, amount: number, now: number): void => {
   if (amount <= 0) return;
   if (now - state.lastHeatGainTime < 250) return;
@@ -349,6 +415,11 @@ const createVehicle = (engine: Matter.Engine, type: VehicleType, x: number, y: n
     id, type, body, integrity: 100, lane, hits: 0, spawnTime,
     prevPosition: { x, y },
     prevAngle: body.angle,
+    policeMode: 'shadow',
+    policeModeTimer: isPolice ? randRange(1.5, 3) : 0,
+    ramCooldown: 0,
+    spawnGraceTimer: isPolice ? 0.8 : 0,
+    sidePreference: random() < 0.5 ? -1 : 1,
     targetLane: lane,
     laneChangeTimer: randRange(2, 5),
     isChasing: isPolice,
@@ -374,7 +445,7 @@ const main = (): void => {
   rng = createRng(seed);
 
   console.log('%c🎮 FAST FEROCIOUS FANDANGO: FOOLISH FUGITIVES 🎮', 'font-size: 20px; color: #c41e3a; font-weight: bold');
-  console.log('%cPress D to toggle DEMO MODE | Check window.GAME for debug access', 'color: #888');
+  console.log('%cPress F1 to toggle DEMO MODE | Check window.GAME for debug access', 'color: #888');
 
   // Clean up any existing canvases
   document.querySelectorAll('canvas').forEach((c) => {
@@ -488,7 +559,7 @@ const main = (): void => {
     },
   };
 
-  log('DEMO', 'Demo mode DISABLED - Manual control (press F1 to toggle)');
+  log('DEMO', 'Demo mode DISABLED - Manual control (press F1 to toggle demo)');
 
   // Input handlers
   window.addEventListener('keydown', (e) => {
@@ -708,6 +779,8 @@ const update = (state: GameState, dt: number): void => {
     const pursuer = createVehicle(state.engine, 'police', x, spawnY, lane);
     pursuer.isPursuer = true;
     pursuer.isChasing = true;
+    pursuer.spawnGraceTimer = 1.2;
+    pursuer.policeModeTimer = randRange(1.6, 3.2);
     pursuer.targetSpeed = lerp(10, 14, intensity) + randRange(0, 2);
     state.traffic.push(pursuer);
     log('SPAWN', `🚨 PURSUER POLICE #${pursuer.id} spawned BEHIND! [PURSUING]`);
@@ -753,6 +826,7 @@ const update = (state: GameState, dt: number): void => {
 
     // === CALCULATE SPEED based on target, distance, and pursuit ===
     let desiredSpeed = v.targetSpeed;
+    const playerSpeed = Math.abs(state.player.body.velocity.y);
 
     // Keep natural distance from car ahead (unless chasing)
     if (!v.isChasing && nearestAheadDist < 120) {
@@ -764,26 +838,34 @@ const update = (state: GameState, dt: number): void => {
       desiredSpeed = v.targetSpeed * 1.5; // 50% faster pursuit
     }
 
+    if (v.type === 'police') {
+      const closeY = Math.abs(relY) < 140;
+      if (closeY) {
+        desiredSpeed = lerp(desiredSpeed, playerSpeed + 2, 0.25);
+      }
+      if (v.spawnGraceTimer > 0) {
+        desiredSpeed = Math.min(desiredSpeed, playerSpeed + 1);
+      }
+    }
+
     // === STUNNED: NO CONTROL - just slide! ===
     if (v.stunTimer <= 0) {
       // === NORMAL AI ===
       let steerForce = 0;
 
       // Police/chasers pursue aggressively
-      if (v.isChasing || (v.hits > 0 && random() < 0.5)) {
+      if (v.type === 'police') {
+        updatePoliceTimers(v, stepDt);
+        updatePoliceMode(v);
+        steerForce = getPoliceSteer(state, v, relY);
+      } else if (v.isChasing || (v.hits > 0 && random() < 0.5)) {
         if (v.hits > 0 && !v.isChasing) {
           v.isChasing = true;
           log('HIT', `🔥 ${v.type.toUpperCase()} #${v.id} is now ANGRY!`);
         }
 
         const dx = playerX - trafficX;
-        const baseAggression = v.type === 'police' ? 0.6 : 0.3;
-        steerForce = Math.sign(dx) * baseAggression;
-
-        // Police RAM from side when close!
-        if (v.type === 'police' && Math.abs(dx) < 50 && Math.abs(relY) < 150) {
-          steerForce = Math.sign(dx) * 1.2; // HARD ram!
-        }
+        steerForce = Math.sign(dx) * 0.3;
       } else if (v.type !== 'geldtransporter') {
         // Regular traffic - lane keeping + avoid getting too close to others
         const targetX = getLaneX(v.targetLane);
