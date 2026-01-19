@@ -4,6 +4,29 @@ import { ROAD_WIDTH, ROAD_LEFT, ROAD_RIGHT, LANE_COUNT, LANE_WIDTH, BARRIER_WIDT
 import { impactEnergy, impactTier } from './game/collision.ts';
 import { getOpenLanes } from './game/spawn.ts';
 import { createRng, parseSeed } from './utils/random.ts';
+import { clamp, clamp01, lerp, lerpAngle, snap, shadeColor, formatTime } from './utils/math.ts';
+import { log } from './utils/logger.ts';
+import {
+  type TractionParams,
+  type DriveParams,
+  PLAYER_TRACTION,
+  AI_TRACTION,
+  STUN_TRACTION,
+  WRECKED_TRACTION,
+  PLAYER_DRIVE,
+  PLAYER_DRIVE_COAST,
+  PLAYER_DRIVE_BRAKE,
+  AI_DRIVE,
+  MAX_SPEED,
+  BOOST_MAX,
+  BOOST_DURATION,
+  BOOST_RECHARGE_DELAY,
+  BOOST_RECHARGE_RATE,
+  BOOST_SPEED,
+  SHIELD_DURATION,
+  POWERUP_TTL,
+  PLAYER_SPEED,
+} from './config/physics.ts';
 
 // ============================================================================
 // TYPES
@@ -96,34 +119,6 @@ interface GameState {
 type EngineWithPairs = Omit<Matter.Engine, 'pairs'> & { pairs: { list: Matter.Pair[] } };
 
 // ============================================================================
-// LOGGING SYSTEM
-// ============================================================================
-
-const LOG_COLORS = {
-  SPAWN: 'color: #2ecc71; font-weight: bold',
-  COLLISION: 'color: #e74c3c; font-weight: bold',
-  HIT: 'color: #f39c12; font-weight: bold',
-  DESTROY: 'color: #9b59b6; font-weight: bold',
-  CASH: 'color: #f1c40f; font-weight: bold',
-  STAR: 'color: #3498db; font-weight: bold',
-  BUSTED: 'color: #e74c3c; font-weight: bold; font-size: 14px',
-  DAMAGE: 'color: #e67e22; font-weight: bold',
-  DEMO: 'color: #1abc9c; font-weight: bold',
-  STATE: 'color: #95a5a6',
-};
-
-const log = (category: keyof typeof LOG_COLORS, message: string, data?: unknown): void => {
-  const style = LOG_COLORS[category];
-  const now = new Date();
-  const ts = `${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
-  if (data !== undefined) {
-    console.log(`%c[${ts}][${category}] ${message}`, style, data);
-  } else {
-    console.log(`%c[${ts}][${category}] ${message}`, style);
-  }
-};
-
-// ============================================================================
 // GLOBALS
 // ============================================================================
 
@@ -146,130 +141,6 @@ let powerUpId = 0;
 // ARCADE HANDLING HELPERS
 // ============================================================================
 
-interface TractionParams {
-  lateralGrip: number;
-  rollingDrag: number;
-  angularDrag: number;
-  maxAngVel: number;
-  yawStiffness: number;
-}
-
-interface DriveParams {
-  engineForce: number;
-  maxLateralSpeed: number;
-  steerAccel: number;
-  maxSpeedDelta: number;
-}
-
-const PLAYER_TRACTION: TractionParams = {
-  lateralGrip: 0.12,
-  rollingDrag: 0.02,
-  angularDrag: 0.2,
-  maxAngVel: 2.5,
-  yawStiffness: 0.05,
-};
-
-const AI_TRACTION: TractionParams = {
-  lateralGrip: 0.1,
-  rollingDrag: 0.03,
-  angularDrag: 0.25,
-  maxAngVel: 2.2,
-  yawStiffness: 0.04,
-};
-
-const STUN_TRACTION: TractionParams = {
-  lateralGrip: 0.03,
-  rollingDrag: 0.01,
-  angularDrag: 0.15,
-  maxAngVel: 3.5,
-  yawStiffness: 0.01,
-};
-
-const WRECKED_TRACTION: TractionParams = {
-  lateralGrip: 0.2,
-  rollingDrag: 0.1,
-  angularDrag: 0.3,
-  maxAngVel: 1.2,
-  yawStiffness: 0.02,
-};
-
-const PLAYER_DRIVE: DriveParams = {
-  engineForce: 0.12,
-  maxLateralSpeed: 4,
-  steerAccel: 0.08,
-  maxSpeedDelta: 20,
-};
-
-const PLAYER_DRIVE_COAST: DriveParams = {
-  engineForce: 0.06,
-  maxLateralSpeed: 3.6,
-  steerAccel: 0.07,
-  maxSpeedDelta: 16,
-};
-
-const PLAYER_DRIVE_BRAKE: DriveParams = {
-  engineForce: 0.2,
-  maxLateralSpeed: 3.2,
-  steerAccel: 0.07,
-  maxSpeedDelta: 20,
-};
-
-const AI_DRIVE: DriveParams = {
-  engineForce: 0.08,
-  maxLateralSpeed: 3,
-  steerAccel: 0.06,
-  maxSpeedDelta: 15,
-};
-
-const MAX_SPEED = 18;
-const BOOST_MAX = 100;
-const BOOST_DURATION = 1.4;
-const BOOST_RECHARGE_DELAY = 1.2;
-const BOOST_RECHARGE_RATE = 28;
-const BOOST_SPEED = 8;
-const SHIELD_DURATION = 4.5;
-const POWERUP_TTL = 10;
-const PLAYER_SPEED = {
-  throttle: 9,
-  coast: 5,
-  brake: 2,
-};
-
-const clamp = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value));
-const clamp01 = (value: number): number => clamp(value, 0, 1);
-const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-const lerpAngle = (a: number, b: number, t: number): number => {
-  const delta = Math.atan2(Math.sin(b - a), Math.cos(b - a));
-  return a + delta * t;
-};
-const snap = (value: number): number => Math.round(value);
-const formatTime = (seconds: number): string => {
-  const totalSeconds = Math.max(0, Math.floor(seconds));
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-};
-const normalizeHex = (hex: string): string => {
-  const cleaned = hex.replace('#', '');
-  if (cleaned.length === 3) {
-    return cleaned
-      .split('')
-      .map((c) => `${c}${c}`)
-      .join('');
-  }
-  return cleaned;
-};
-const toHex = (value: number): string => Math.round(value).toString(16).padStart(2, '0');
-const shadeColor = (hex: string, amount: number): string => {
-  const normalized = normalizeHex(hex);
-  if (normalized.length !== 6) return hex;
-  const num = Number.parseInt(normalized, 16);
-  const r = clamp((num >> 16) + amount, 0, 255);
-  const g = clamp(((num >> 8) & 0xff) + amount, 0, 255);
-  const b = clamp((num & 0xff) + amount, 0, 255);
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-};
 const random = (): number => rng();
 const randRange = (min: number, max: number): number => min + random() * (max - min);
 const randInt = (maxExclusive: number): number =>
@@ -1681,11 +1552,18 @@ const drawVehicle = (ctx: CanvasRenderingContext2D, v: Vehicle, screenX: number,
   ctx.translate(screenX, screenY);
   ctx.rotate(angle);
 
-  // Shadow (subtle to avoid ghosting)
-  const shadowOffsetX = v.isWrecked ? 3 : 2;
-  const shadowOffsetY = v.isWrecked ? 4 : 3;
-  ctx.fillStyle = v.isWrecked ? 'rgba(0,0,0,0.38)' : 'rgba(0,0,0,0.2)';
-  ctx.fillRect(-hw + shadowOffsetX, -hh + shadowOffsetY, bodyW, bodyH);
+  // Shadow - fade based on speed to prevent ghosting on fast-moving vehicles
+  const speed = Math.sqrt(v.body.velocity.x ** 2 + v.body.velocity.y ** 2);
+  const shadowFade = Math.max(0, 1 - speed / 12);
+  const baseAlpha = v.isWrecked ? 0.38 : 0.2;
+  const shadowAlpha = baseAlpha * shadowFade;
+
+  if (shadowAlpha > 0.03) {
+    const shadowOffsetX = v.isWrecked ? 3 : 2;
+    const shadowOffsetY = v.isWrecked ? 4 : 3;
+    ctx.fillStyle = `rgba(0,0,0,${shadowAlpha})`;
+    ctx.fillRect(-hw + shadowOffsetX, -hh + shadowOffsetY, bodyW, bodyH);
+  }
 
   // Body - BLACK and BURNING if wrecked
   if (v.isWrecked) {
