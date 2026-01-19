@@ -17,6 +17,7 @@ interface Vehicle {
   lane: number;
   hits: number;
   spawnTime: number;
+  prevPosition: { x: number; y: number };
   targetLane: number;
   laneChangeTimer: number;
   isChasing: boolean;
@@ -320,6 +321,7 @@ const createVehicle = (engine: Matter.Engine, type: VehicleType, x: number, y: n
   log('SPAWN', `${type.toUpperCase()} #${id} at lane ${lane} (x=${x.toFixed(0)}, y=${y.toFixed(0)})${isPolice ? ' [WILL CHASE]' : ''}`);
   return {
     id, type, body, integrity: 100, lane, hits: 0, spawnTime,
+    prevPosition: { x, y },
     targetLane: lane,
     laneChangeTimer: randRange(2, 5),
     isChasing: isPolice,
@@ -491,7 +493,8 @@ const main = (): void => {
       accumulator -= fixedDt;
     }
 
-    render(ctx, state, canvas.clientWidth, canvas.clientHeight);
+    const alpha = accumulator / fixedDt;
+    render(ctx, state, canvas.clientWidth, canvas.clientHeight, alpha);
 
     state.frameCount++;
     requestAnimationFrame(gameLoop);
@@ -573,6 +576,7 @@ const update = (state: GameState, dt: number): void => {
       }
       state.traffic = [];
       state.activeCollisions.clear();
+      state.player.prevPosition = { x: state.player.body.position.x, y: state.player.body.position.y };
       log('STATE', 'Respawned! Integrity restored, stars cleared');
     }
     return;
@@ -779,6 +783,11 @@ const update = (state: GameState, dt: number): void => {
     } else {
       applyArcadeTraction(v.body, stepDt, AI_TRACTION);
     }
+  }
+
+  state.player.prevPosition = { x: body.position.x, y: body.position.y };
+  for (const v of state.traffic) {
+    v.prevPosition = { x: v.body.position.x, y: v.body.position.y };
   }
 
   // Physics step
@@ -1014,7 +1023,7 @@ const destroyVehicle = (state: GameState, vehicle: Vehicle): void => {
 // RENDERING
 // ============================================================================
 
-const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void => {
+const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number, alpha: number): void => {
   ctx.save();
 
   // === SCREEN SHAKE === (DISABLED)
@@ -1025,6 +1034,11 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
   // }
 
   const cx = w / 2;
+  const clampedAlpha = clamp01(alpha);
+  const playerPos = {
+    x: lerp(state.player.prevPosition.x, state.player.body.position.x, clampedAlpha),
+    y: lerp(state.player.prevPosition.y, state.player.body.position.y, clampedAlpha),
+  };
   const playerScreenY = h * 0.65;
 
   // Clear with grass
@@ -1045,7 +1059,8 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
   const dashLen = 35;
   const gapLen = 25;
   const totalLen = dashLen + gapLen;
-  const offset = state.scrollY % totalLen;
+  const scrollY = -playerPos.y;
+  const offset = scrollY % totalLen;
 
   for (let lane = 1; lane < LANE_COUNT; lane++) {
     const laneX = cx + ROAD_LEFT + lane * LANE_WIDTH;
@@ -1056,13 +1071,17 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
 
   // Draw traffic relative to player position
   for (const v of state.traffic) {
-    const screenY = playerScreenY + (v.body.position.y - state.player.body.position.y);
-    const screenX = cx + v.body.position.x;
+    const trafficPos = {
+      x: lerp(v.prevPosition.x, v.body.position.x, clampedAlpha),
+      y: lerp(v.prevPosition.y, v.body.position.y, clampedAlpha),
+    };
+    const screenY = playerScreenY + (trafficPos.y - playerPos.y);
+    const screenX = cx + trafficPos.x;
     drawVehicle(ctx, v, screenX, screenY);
   }
 
   // Draw player
-  drawVehicle(ctx, state.player, cx + state.player.body.position.x, playerScreenY);
+  drawVehicle(ctx, state.player, cx + playerPos.x, playerScreenY);
 
   // HUD
   drawHUD(ctx, state, w);
