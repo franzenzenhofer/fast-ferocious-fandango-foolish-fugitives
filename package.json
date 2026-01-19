@@ -7,14 +7,20 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest",
-    "test:coverage": "vitest --coverage",
+    "test": "vitest --run",
+    "test:coverage": "vitest --run --coverage",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "test:watch": "vitest"
   },
-  "keywords": ["game", "arcade", "ramming", "typescript"],
+  "keywords": [
+    "game",
+    "arcade",
+    "ramming",
+    "typescript"
+  ],
   "author": "Franz Enzenhofer",
   "license": "MIT",
   "dependencies": {

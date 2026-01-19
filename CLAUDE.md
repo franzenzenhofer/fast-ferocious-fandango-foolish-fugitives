@@ -17,6 +17,7 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 npm run dev          # Start Vite dev server
 npm run build        # TypeScript compile + Vite build
 npm run test         # Run Vitest tests
+npm run test:watch   # Run Vitest in watch mode
 npm run typecheck    # TypeScript type check
 npm run lint         # ESLint
 npm run check        # typecheck + lint + test (all gates)

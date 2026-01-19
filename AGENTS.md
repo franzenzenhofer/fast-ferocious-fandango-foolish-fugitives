@@ -26,6 +26,7 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 - `npm run lint:fix` auto-fix lint issues where possible.
 - `npm run typecheck` run `tsc --noEmit`.
 - `npm run test` run Vitest once.
+- `npm run test:watch` run Vitest in watch mode.
 - `npm run test:coverage` run tests with coverage output.
 - `npm run check` run typecheck + lint + tests.
 
