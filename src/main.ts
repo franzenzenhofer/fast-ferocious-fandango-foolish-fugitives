@@ -12,6 +12,8 @@ import { createRng, parseSeed } from './utils/random.ts';
 type PoliceMode = 'shadow' | 'ram';
 type AIMode = 'lane' | 'weave' | 'block' | 'escort';
 type PowerUpType = 'repair' | 'shield' | 'turbo';
+type AlertDirection = 'generic' | 'ahead' | 'behind';
+type ThrottleState = 'brake' | 'coast' | 'accel';
 
 interface Vehicle {
   id: number;
@@ -64,11 +66,17 @@ interface GameState {
   alertText: string;
   alertColor: string;
   alertTimer: number;
+  alertDirection: AlertDirection;
+  pickupText: string;
+  pickupColor: string;
+  pickupTimer: number;
   controlHintTimer: number;
   hitFlash: number;
   boost: number;
   boostActiveTimer: number;
   boostRechargeDelay: number;
+  throttleState: ThrottleState;
+  hadTouch: boolean;
   playerShieldTimer: number;
   powerUpSpawnTimer: number;
   scrollY: number;
@@ -236,6 +244,12 @@ const lerpAngle = (a: number, b: number, t: number): number => {
   return a + delta * t;
 };
 const snap = (value: number): number => Math.round(value);
+const formatTime = (seconds: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
 const normalizeHex = (hex: string): string => {
   const cleaned = hex.replace('#', '');
   if (cleaned.length === 3) {
@@ -386,15 +400,24 @@ const collectPowerUp = (state: GameState, powerUp: PowerUp): void => {
   if (powerUp.type === 'repair') {
     const oldIntegrity = state.player.integrity;
     state.player.integrity = Math.min(100, state.player.integrity + powerUp.value);
+    state.pickupText = `REPAIR +${powerUp.value}`;
+    state.pickupColor = '#3df27a';
+    state.pickupTimer = 1.4;
     log('DAMAGE', `🔧 +${powerUp.value} repair (${oldIntegrity.toFixed(1)}% → ${state.player.integrity.toFixed(1)}%)`);
   } else if (powerUp.type === 'shield') {
     state.playerShieldTimer = Math.max(state.playerShieldTimer, SHIELD_DURATION);
+    state.pickupText = 'SHIELD UP';
+    state.pickupColor = '#46d9ff';
+    state.pickupTimer = 1.4;
     log('STATE', '🛡️ SHIELD ACTIVATED');
   } else {
     state.boost = BOOST_MAX;
     if (state.boostActiveTimer <= 0) {
       state.boostRechargeDelay = 0;
     }
+    state.pickupText = 'BOOST READY';
+    state.pickupColor = '#ffd447';
+    state.pickupTimer = 1.4;
     log('STATE', '⚡ TURBO CHARGED');
   }
 };
@@ -524,11 +547,12 @@ const applyHeatGain = (state: GameState, amount: number, now: number): void => {
   state.lastHeatGainTime = now;
 };
 
-const triggerAlert = (state: GameState, text: string, color: string): void => {
+const triggerAlert = (state: GameState, text: string, color: string, direction: AlertDirection = 'generic'): void => {
   if (state.alertTimer > 0.6) return;
   state.alertText = text;
   state.alertColor = color;
   state.alertTimer = 1.6;
+  state.alertDirection = direction;
 };
 
 const pickVehicleType = (heat: number, elapsedTime: number): VehicleType => {
@@ -700,10 +724,16 @@ const main = (): void => {
     alertText: '',
     alertColor: '#fff',
     alertTimer: 0,
+    alertDirection: 'generic',
+    pickupText: '',
+    pickupColor: '#fff',
+    pickupTimer: 0,
     controlHintTimer: 6,
     hitFlash: 0,
     screenShake: 0,
     slowMo: 0,
+    throttleState: 'coast',
+    hadTouch: false,
   };
 
   // Debug access
@@ -773,6 +803,7 @@ const main = (): void => {
     if (touch === undefined) return;
     e.preventDefault();
     touchState.active = true;
+    state.hadTouch = true;
     touchState.startX = touch.clientX;
     touchState.startY = touch.clientY;
   };
@@ -901,9 +932,14 @@ const update = (state: GameState, dt: number): void => {
       state.player.prevAngle = state.player.body.angle;
       state.hitFlash = 0;
       state.controlHintTimer = 6;
+      state.alertTimer = 0;
+      state.alertDirection = 'generic';
+      state.pickupText = '';
+      state.pickupTimer = 0;
       state.playerShieldTimer = 0;
       state.powerUps = [];
       state.powerUpSpawnTimer = randRange(6, 10);
+      state.throttleState = 'coast';
       log('STATE', 'Respawned! Integrity restored, stars cleared');
     }
     return;
@@ -923,6 +959,7 @@ const update = (state: GameState, dt: number): void => {
   state.playerIFrameTimer = Math.max(0, state.playerIFrameTimer - stepDt);
   state.alertTimer = Math.max(0, state.alertTimer - stepDt);
   state.hitFlash = Math.max(0, state.hitFlash - stepDt * 4);
+  state.pickupTimer = Math.max(0, state.pickupTimer - stepDt);
   state.playerShieldTimer = Math.max(0, state.playerShieldTimer - stepDt);
   if (!state.demoMode && (input.left || input.right || input.boost || input.brake)) {
     state.controlHintTimer = 0;
@@ -939,6 +976,7 @@ const update = (state: GameState, dt: number): void => {
 
   const wantsBrake = currentInput.brake;
   const wantsThrottle = currentInput.up;
+  state.throttleState = wantsBrake ? 'brake' : wantsThrottle ? 'accel' : 'coast';
   const baseSpeed = wantsBrake
     ? PLAYER_SPEED.brake
     : wantsThrottle
@@ -998,7 +1036,7 @@ const update = (state: GameState, dt: number): void => {
           const type = pickVehicleType(state.heat, state.elapsedTime);
           const vehicle = createVehicle(state.engine, type, x, spawnY, lane);
           state.traffic.push(vehicle);
-          if (type === 'police') triggerAlert(state, 'POLICE AHEAD', '#ff4444');
+          if (type === 'police') triggerAlert(state, 'POLICE AHEAD', '#ff4444', 'ahead');
           if (type === 'geldtransporter') triggerAlert(state, 'HEIST TARGET', '#ffd700');
         }
       }
@@ -1046,7 +1084,7 @@ const update = (state: GameState, dt: number): void => {
     pursuer.targetSpeed = lerp(10, 14, intensity) + randRange(0, 2);
     state.traffic.push(pursuer);
     log('SPAWN', `🚨 PURSUER POLICE #${pursuer.id} spawned BEHIND! [PURSUING]`);
-    triggerAlert(state, 'POLICE BEHIND', '#ff4444');
+    triggerAlert(state, 'POLICE BEHIND', '#ff4444', 'behind');
   }
 
   // CHAOS PHYSICS: Cars get THROWN around and SLIDE!
@@ -1494,6 +1532,12 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     }
   }
 
+  // Player lane highlight for readability
+  const playerLane = getNearestLane(playerPos.x);
+  const laneLeft = cx + ROAD_LEFT + playerLane * LANE_WIDTH;
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fillRect(snap(laneLeft), playerScreenY - 140, LANE_WIDTH, 280);
+
   // Power-ups
   for (const powerUp of state.powerUps) {
     const screenY = snap(playerScreenY + (powerUp.y - playerPos.y));
@@ -1514,6 +1558,16 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
   }
 
   // Draw player
+  if (state.boostActiveTimer > 0) {
+    const glowAlpha = 0.25 + 0.15 * Math.sin(state.elapsedTime * 18);
+    ctx.save();
+    ctx.globalAlpha = glowAlpha;
+    ctx.fillStyle = '#ffd447';
+    ctx.beginPath();
+    ctx.ellipse(snap(cx + playerPos.x), playerScreenY + 6, 18, 34, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
   drawVehicle(ctx, state.player, snap(cx + playerPos.x), playerScreenY, playerAngle);
 
   // HUD
@@ -1524,11 +1578,14 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     ctx.save();
     ctx.globalAlpha = Math.min(1, state.controlHintTimer / 2);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(w / 2 - 190, h - 72, 380, 44);
+    ctx.fillRect(w / 2 - 210, h - 72, 420, 44);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('STEER: A/D or \u2190/\u2192  ACCEL: W/\u2191  BOOST: SPACE  BRAKE: S/\u2193  DEMO: F1', w / 2, h - 45);
+    const hintText = state.hadTouch
+      ? 'SWIPE: STEER  SWIPE UP: ACCEL  SWIPE DOWN: BRAKE'
+      : 'STEER: A/D or \u2190/\u2192  ACCEL: W/\u2191  BOOST: SPACE  BRAKE: S/\u2193  DEMO: F1';
+    ctx.fillText(hintText, w / 2, h - 45);
     ctx.restore();
   }
 
@@ -1539,6 +1596,26 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     ctx.font = 'bold 20px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(state.alertText, w / 2, 60);
+    if (state.alertDirection !== 'generic') {
+      const arrowY = state.alertDirection === 'ahead' ? 90 : h - 90;
+      const arrowDir = state.alertDirection === 'ahead' ? -1 : 1;
+      ctx.beginPath();
+      ctx.moveTo(w / 2, arrowY + arrowDir * -14);
+      ctx.lineTo(w / 2 - 16, arrowY + arrowDir * 10);
+      ctx.lineTo(w / 2 + 16, arrowY + arrowDir * 10);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  if (state.pickupTimer > 0) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, state.pickupTimer / 0.3);
+    ctx.fillStyle = state.pickupColor;
+    ctx.font = 'bold 14px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(state.pickupText, 20, 118);
     ctx.restore();
   }
 
@@ -1800,6 +1877,9 @@ const drawHUD = (ctx: CanvasRenderingContext2D, state: GameState, w: number): vo
   const boostColor = boostActive ? '#ffd447' : boostReady ? '#3df27a' : '#00bfff';
   ctx.fillStyle = boostColor;
   ctx.fillRect(20, 54, 120 * (state.boost / BOOST_MAX), 12);
+  ctx.font = 'bold 9px monospace';
+  ctx.fillStyle = boostColor;
+  ctx.fillText(boostActive ? 'BOOST' : boostReady ? 'READY' : 'CHARGE', 148, 63);
 
   // Shield bar
   if (state.playerShieldTimer > 0) {
@@ -1811,13 +1891,35 @@ const drawHUD = (ctx: CanvasRenderingContext2D, state: GameState, w: number): vo
     ctx.fillRect(20, 74, shieldWidth, 6);
     ctx.fillStyle = '#46d9ff';
     ctx.fillRect(20, 74, shieldWidth * shieldPct, 6);
+    ctx.font = 'bold 9px monospace';
+    ctx.fillStyle = '#46d9ff';
+    ctx.fillText(`SHIELD ${Math.ceil(state.playerShieldTimer)}s`, 148, 81);
   }
+
+  // Speed + throttle state
+  const speedY = state.playerShieldTimer > 0 ? 88 : 72;
+  const speed = Math.abs(state.player.body.velocity.y);
+  const speedPct = clamp01(speed / MAX_SPEED);
+  const throttleColor = state.throttleState === 'brake' ? '#e74c3c' : state.throttleState === 'accel' ? '#3df27a' : '#f39c12';
+  ctx.fillStyle = '#222';
+  ctx.fillRect(18, speedY, 124, 14);
+  ctx.fillStyle = '#333';
+  ctx.fillRect(20, speedY + 2, 120, 10);
+  ctx.fillStyle = throttleColor;
+  ctx.fillRect(20, speedY + 2, 120 * speedPct, 10);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText(state.throttleState.toUpperCase(), 24, speedY + 11);
+  ctx.fillText(`SPD ${Math.round(speed * 10)}`, 148, speedY + 11);
 
   // Cash
   ctx.fillStyle = '#ffd700';
   ctx.font = 'bold 28px monospace';
   ctx.textAlign = 'right';
   ctx.fillText(`$${state.cash.toLocaleString()}`, w - 20, 42);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText(`RUN ${formatTime(state.elapsedTime)}`, w - 20, 62);
 
   // Stars
   for (let i = 0; i < 5; i++) {

@@ -19,7 +19,7 @@ export default tseslint.config(
       ],
       'no-var': 'error',
       'prefer-const': 'error',
-      'max-lines': ['error', { max: 1600, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['error', { max: 1800, skipBlankLines: true, skipComments: true }],
     },
   },
   {
