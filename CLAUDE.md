@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Fast Ferocious Fandango: Foolish Fugitives** - A mobile-first physics-based car ramming game. RAM traffic cars off the road for points.
 
-**Current State**: HTML prototype exists (`spy_driver_physics.html`). Architecture spec in `briefing.md` defines the TypeScript modular engine to be built.
+**Current State**: `src/main.ts` is the canonical runtime (Matter.js). The modular architecture in `briefing.md` and `src/game/Game.ts` is legacy/experimental until an intentional migration.
 
 ## Golden Goal
 Retro chaos that still feels fair: collisions are readable and push cars sideways, skillful ramming matters, difficulty ramps from 1 car to chaos, and runs never end (BUSTED loop).

@@ -4,11 +4,12 @@
 Retro chaos that still feels fair: collisions are readable and push cars sideways, skillful ramming matters, difficulty ramps from 1 car to chaos, and runs never end (BUSTED loop).
 
 ## Physics Stack
-- Use Matter.js via `src/game/physics.ts` and `src/main.ts`.
-- `src/engine/physics/` is experimental/legacy; avoid new gameplay logic there unless migrating the whole stack.
+- Primary runtime uses Matter.js directly in `src/main.ts`.
+- `src/game/Game.ts` and `src/game/physics.ts` are legacy/experimental until an intentional migration happens.
+- `src/engine/physics/` is legacy; avoid new gameplay logic there unless replacing the main stack.
 
 ## Project Structure & Module Organization
-- `src/main.ts` bootstraps the game and wires engine + game modules.
+- `src/main.ts` is the current gameplay entry point.
 - `src/engine/` holds reusable engine code (core loop, physics, render, input).
 - `src/game/` contains game-specific logic (config, road, vehicles, HUD, state).
 - `src/utils/` is for shared helpers.

@@ -46,7 +46,7 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 - [x] Improve HUD clarity at higher heat (alerts, heat indicator, collision cue).
 - [x] Tune collision damage/i-frames so integrity doesn't evaporate in early-medium heat.
 - [x] Confirm collision tuning at higher heat (2+ stars) still feels fair.
-- [ ] Port traction + fixed timestep into `src/game/Game.ts` if switching to the modular path.
+- [x] Decision: keep `src/main.ts` as the primary stack; no port planned unless the architecture pivots.
 
 ## MCP Feedback Round 2 (Post Energy Damage)
 - Wrecked vehicles appear; collisions now trigger slow-mo and damage tiers.
