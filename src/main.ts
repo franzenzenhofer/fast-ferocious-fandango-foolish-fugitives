@@ -44,6 +44,8 @@ interface GameState {
   alertText: string;
   alertColor: string;
   alertTimer: number;
+  controlHintTimer: number;
+  hitFlash: number;
   boost: number;
   scrollY: number;
   spawnTimer: number;
@@ -448,13 +450,15 @@ const main = (): void => {
     pursuerSpawnTimer: randRange(8, 13), // First pursuer after 8-13 seconds
     busted: false,
     bustedTimer: 0,
-    demoMode: true, // START IN DEMO MODE
+    demoMode: false,
     frameCount: 0,
     activeCollisions: new Set<number>(),
     elapsedTime: 0,
     alertText: '',
     alertColor: '#fff',
     alertTimer: 0,
+    controlHintTimer: 6,
+    hitFlash: 0,
     screenShake: 0,
     slowMo: 0,
   };
@@ -464,6 +468,10 @@ const main = (): void => {
     state,
     toggleDemo: (): void => {
       state.demoMode = !state.demoMode;
+      input.left = false;
+      input.right = false;
+      input.boost = false;
+      input.brake = false;
       log('DEMO', state.demoMode ? 'Demo mode ENABLED - AI driving' : 'Demo mode DISABLED - Manual control');
     },
     getStatus: (): void => {
@@ -480,11 +488,12 @@ const main = (): void => {
     },
   };
 
-  log('DEMO', 'Demo mode ENABLED - AI driving (press D to toggle)');
+  log('DEMO', 'Demo mode DISABLED - Manual control (press F1 to toggle)');
 
   // Input handlers
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyD') {
+    if (e.code === 'F1') {
+      e.preventDefault();
       window.GAME.toggleDemo();
       return;
     }
@@ -497,7 +506,7 @@ const main = (): void => {
   window.addEventListener('keyup', (e) => {
     if (state.demoMode) return;
     if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
-    if (e.code === 'ArrowRight') input.right = false;
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
     if (e.code === 'Space') input.boost = false;
     if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft') input.brake = false;
   });
@@ -603,6 +612,8 @@ const update = (state: GameState, dt: number): void => {
       state.activeCollisions.clear();
       state.player.prevPosition = { x: state.player.body.position.x, y: state.player.body.position.y };
       state.player.prevAngle = state.player.body.angle;
+      state.hitFlash = 0;
+      state.controlHintTimer = 6;
       log('STATE', 'Respawned! Integrity restored, stars cleared');
     }
     return;
@@ -621,6 +632,12 @@ const update = (state: GameState, dt: number): void => {
   }
   state.playerIFrameTimer = Math.max(0, state.playerIFrameTimer - stepDt);
   state.alertTimer = Math.max(0, state.alertTimer - stepDt);
+  state.hitFlash = Math.max(0, state.hitFlash - stepDt * 4);
+  if (!state.demoMode && (input.left || input.right || input.boost || input.brake)) {
+    state.controlHintTimer = 0;
+  } else {
+    state.controlHintTimer = Math.max(0, state.controlHintTimer - stepDt);
+  }
 
   // Get input (demo AI or manual)
   const currentInput = state.demoMode ? demoAI(state) : input;
@@ -939,6 +956,7 @@ const handleCollisions = (state: GameState): void => {
             state.playerIFrameTimer,
             iFrameDuration
           );
+          state.hitFlash = Math.max(state.hitFlash, tier === 'crash' ? 0.35 : tier === 'slam' ? 0.25 : 0.15);
           log('DAMAGE', `💥 Player hit (-${playerDamage.toFixed(1)}%)`);
         }
 
@@ -1057,12 +1075,11 @@ const destroyVehicle = (state: GameState, vehicle: Vehicle): void => {
 const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number, alpha: number): void => {
   ctx.save();
 
-  // === SCREEN SHAKE === (DISABLED)
-  // if (state.screenShake > 0) {
-  //   const shakeX = (Math.random() - 0.5) * state.screenShake * 2;
-  //   const shakeY = (Math.random() - 0.5) * state.screenShake * 2;
-  //   ctx.translate(shakeX, shakeY);
-  // }
+  if (state.screenShake > 0) {
+    const shakeX = (Math.random() - 0.5) * state.screenShake;
+    const shakeY = (Math.random() - 0.5) * state.screenShake;
+    ctx.translate(shakeX, shakeY);
+  }
 
   const cx = w / 2;
   const clampedAlpha = clamp01(alpha);
@@ -1119,6 +1136,19 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
   // HUD
   drawHUD(ctx, state, w);
 
+  // Control hints (first seconds in manual mode)
+  if (!state.demoMode && state.controlHintTimer > 0) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, state.controlHintTimer / 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(w / 2 - 190, h - 72, 380, 44);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('STEER: A/D or \u2190/\u2192  BOOST: SPACE  BRAKE: S/\u2193  DEMO: F1', w / 2, h - 45);
+    ctx.restore();
+  }
+
   if (state.alertTimer > 0) {
     ctx.save();
     ctx.globalAlpha = Math.min(1, state.alertTimer / 0.4);
@@ -1134,7 +1164,7 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
     ctx.font = 'bold 16px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('🤖 DEMO MODE - Press D to take control', w / 2, 30);
+    ctx.fillText('🤖 DEMO MODE - Press F1 to take control', w / 2, 30);
     ctx.textAlign = 'left';
   }
 
@@ -1155,6 +1185,24 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
   // Slow-mo visual indicator
   if (state.slowMo > 0) {
     ctx.fillStyle = 'rgba(0, 100, 255, 0.1)';
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  // Low integrity warning
+  if (!state.busted && state.player.integrity <= 20) {
+    const pulse = 0.35 + 0.35 * Math.sin(state.elapsedTime * 6);
+    ctx.fillStyle = `rgba(255, 40, 40, ${pulse})`;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 22px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('CRITICAL INTEGRITY', w / 2, 90);
+    ctx.textAlign = 'left';
+  }
+
+  // Hit flash
+  if (state.hitFlash > 0) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${state.hitFlash})`;
     ctx.fillRect(0, 0, w, h);
   }
 
