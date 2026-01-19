@@ -7,8 +7,15 @@ import { createRng, parseSeed } from './utils/random.ts';
 import { clamp, clamp01, lerp, lerpAngle, snap, shadeColor, formatTime } from './utils/math.ts';
 import { log } from './utils/logger.ts';
 import {
-  type TractionParams,
-  type DriveParams,
+  type Vehicle,
+  type PowerUp,
+  type GameState,
+  type EngineWithPairs,
+  type AIMode,
+  type PowerUpType,
+  type AlertDirection,
+} from './types/index.ts';
+import {
   PLAYER_TRACTION,
   AI_TRACTION,
   STUN_TRACTION,
@@ -27,96 +34,12 @@ import {
   POWERUP_TTL,
   PLAYER_SPEED,
 } from './config/physics.ts';
-
-// ============================================================================
-// TYPES
-// ============================================================================
-
-type PoliceMode = 'shadow' | 'ram';
-type AIMode = 'lane' | 'weave' | 'block' | 'escort';
-type PowerUpType = 'repair' | 'shield' | 'turbo';
-type AlertDirection = 'generic' | 'ahead' | 'behind';
-type ThrottleState = 'brake' | 'coast' | 'accel';
-
-interface Vehicle {
-  id: number;
-  type: VehicleType;
-  body: Matter.Body;
-  integrity: number;
-  lane: number;
-  hits: number;
-  spawnTime: number;
-  prevPosition: { x: number; y: number };
-  prevAngle: number;
-  policeMode: PoliceMode;
-  policeModeTimer: number;
-  ramCooldown: number;
-  spawnGraceTimer: number;
-  sidePreference: number;
-  aiMode: AIMode;
-  targetLane: number;
-  laneChangeTimer: number;
-  isChasing: boolean;
-  stunTimer: number;
-  targetSpeed: number;
-  isPursuer: boolean;
-  isWrecked: boolean; // Car is destroyed but stays as obstacle
-}
-
-interface PowerUp {
-  id: number;
-  type: PowerUpType;
-  x: number;
-  y: number;
-  ttl: number;
-  value: number;
-}
-
-interface GameState {
-  engine: Matter.Engine;
-  player: Vehicle;
-  traffic: Vehicle[];
-  powerUps: PowerUp[];
-  barriers: { left: Matter.Body; right: Matter.Body };
-  cash: number;
-  seed: number;
-  heat: number;
-  stars: number;
-  lastCollisionTime: number;
-  lastBarrierDamageTime: number;
-  playerIFrameTimer: number;
-  lastHeatGainTime: number;
-  alertText: string;
-  alertColor: string;
-  alertTimer: number;
-  alertDirection: AlertDirection;
-  pickupText: string;
-  pickupColor: string;
-  pickupTimer: number;
-  controlHintTimer: number;
-  hitFlash: number;
-  boost: number;
-  boostActiveTimer: number;
-  boostRechargeDelay: number;
-  throttleState: ThrottleState;
-  hadTouch: boolean;
-  playerShieldTimer: number;
-  powerUpSpawnTimer: number;
-  scrollY: number;
-  spawnTimer: number;
-  pursuerSpawnTimer: number; // Timer for spawning police from behind
-  busted: boolean;
-  bustedTimer: number;
-  demoMode: boolean;
-  frameCount: number;
-  activeCollisions: Set<number>;
-  elapsedTime: number;
-  // JUICE
-  screenShake: number;
-  slowMo: number;
-}
-
-type EngineWithPairs = Omit<Matter.Engine, 'pairs'> & { pairs: { list: Matter.Pair[] } };
+import {
+  applyArcadeTraction,
+  clampBodyMotion,
+  applyDriveForces,
+  applyRoadBounds,
+} from './physics/index.ts';
 
 // ============================================================================
 // GLOBALS
@@ -149,77 +72,6 @@ const randInt = (maxExclusive: number): number =>
 const getNearestLane = (x: number): number => {
   const laneIndex = Math.round((x - (ROAD_LEFT + LANE_WIDTH / 2)) / LANE_WIDTH);
   return clamp(laneIndex, 0, LANE_COUNT - 1);
-};
-
-const applyArcadeTraction = (body: Matter.Body, dt: number, params: TractionParams): void => {
-  if (!Number.isFinite(body.velocity.x) || !Number.isFinite(body.velocity.y)) {
-    Matter.Body.setVelocity(body, { x: 0, y: 0 });
-  }
-  if (!Number.isFinite(body.angle) || !Number.isFinite(body.angularVelocity)) {
-    Matter.Body.setAngle(body, 0);
-    Matter.Body.setAngularVelocity(body, 0);
-  }
-
-  const vForward = body.velocity.y;
-  const vLateral = body.velocity.x;
-
-  const lateralDamp = Math.pow(1 - params.lateralGrip, dt * 60);
-  const forwardDamp = Math.pow(1 - params.rollingDrag, dt * 60);
-
-  const newVForward = clamp(vForward * forwardDamp, -MAX_SPEED, MAX_SPEED);
-  const newVLateral = clamp(vLateral * lateralDamp, -MAX_SPEED, MAX_SPEED);
-
-  Matter.Body.setVelocity(body, { x: newVLateral, y: newVForward });
-
-  const angDamp = Math.pow(1 - params.angularDrag, dt * 60);
-  let angularVel = body.angularVelocity * angDamp;
-  angularVel += -body.angle * params.yawStiffness;
-  angularVel = clamp(angularVel, -params.maxAngVel, params.maxAngVel);
-  Matter.Body.setAngularVelocity(body, angularVel);
-};
-
-const applyDriveForces = (body: Matter.Body, targetSpeed: number, steer: number, params: DriveParams): void => {
-  const forwardSpeed = body.velocity.y;
-  const speedError = clamp(targetSpeed - forwardSpeed, -params.maxSpeedDelta, params.maxSpeedDelta);
-  const forwardAccel = speedError * params.engineForce;
-  Matter.Body.applyForce(body, body.position, { x: 0, y: forwardAccel });
-
-  const steering = clamp(steer, -1.5, 1.5);
-  const desiredLateralSpeed = steering * params.maxLateralSpeed;
-  const lateralError = desiredLateralSpeed - body.velocity.x;
-  const lateralAccel = lateralError * params.steerAccel;
-  Matter.Body.applyForce(body, body.position, { x: lateralAccel, y: 0 });
-};
-
-const clampBodyMotion = (body: Matter.Body, maxSpeed: number, maxAngVel: number): void => {
-  if (!Number.isFinite(body.velocity.x) || !Number.isFinite(body.velocity.y)) {
-    Matter.Body.setVelocity(body, { x: 0, y: 0 });
-  }
-  const clampedVx = clamp(body.velocity.x, -maxSpeed, maxSpeed);
-  const clampedVy = clamp(body.velocity.y, -maxSpeed, maxSpeed);
-  if (clampedVx !== body.velocity.x || clampedVy !== body.velocity.y) {
-    Matter.Body.setVelocity(body, { x: clampedVx, y: clampedVy });
-  }
-
-  if (!Number.isFinite(body.angularVelocity)) {
-    Matter.Body.setAngularVelocity(body, 0);
-  }
-  const clampedAngVel = clamp(body.angularVelocity, -maxAngVel, maxAngVel);
-  if (clampedAngVel !== body.angularVelocity) {
-    Matter.Body.setAngularVelocity(body, clampedAngVel);
-  }
-};
-
-const applyRoadBounds = (body: Matter.Body, spring = 0.002, margin = 10): void => {
-  const leftLimit = ROAD_LEFT + margin;
-  const rightLimit = ROAD_RIGHT - margin;
-  if (body.position.x < leftLimit) {
-    const dist = leftLimit - body.position.x;
-    Matter.Body.applyForce(body, body.position, { x: dist * spring * body.mass, y: 0 });
-  } else if (body.position.x > rightLimit) {
-    const dist = body.position.x - rightLimit;
-    Matter.Body.applyForce(body, body.position, { x: -dist * spring * body.mass, y: 0 });
-  }
 };
 
 const updatePoliceTimers = (vehicle: Vehicle, stepDt: number): void => {
