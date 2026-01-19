@@ -82,3 +82,9 @@ Retro chaos that still feels fair: collisions are readable and push cars sideway
 - ~35s: heat ~0.19, stars 0, traffic 3; integrity ~92.
 - ~68s: heat ~0.56, stars 2, traffic 6; integrity ~67; police-ahead alert fired.
 - ~84–94s: heat ~0.81–0.87, stars 4, traffic 9–10; integrity ~85–94; no busted events.
+
+## MCP Feedback Round 9 (Full Phase 2 Pass)
+- ~15s: heat ~0.12, stars 0, traffic 1; integrity ~93.
+- ~50s: heat ~0.33, stars 1, traffic 4; integrity ~70; police-behind alert fired.
+- ~74s: heat ~0.69, stars 3, traffic 5; integrity ~18; police-ahead alert fired.
+- Shortly after: BUSTED triggered; integrity dipped below zero before reset.
