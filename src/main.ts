@@ -56,6 +56,8 @@ interface GameState {
   controlHintTimer: number;
   hitFlash: number;
   boost: number;
+  boostActiveTimer: number;
+  boostRechargeDelay: number;
   scrollY: number;
   spawnTimer: number;
   pursuerSpawnTimer: number; // Timer for spawning police from behind
@@ -184,6 +186,11 @@ const AI_DRIVE: DriveParams = {
 };
 
 const MAX_SPEED = 18;
+const BOOST_MAX = 100;
+const BOOST_DURATION = 1.4;
+const BOOST_RECHARGE_DELAY = 1.2;
+const BOOST_RECHARGE_RATE = 28;
+const BOOST_SPEED = 8;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -587,7 +594,9 @@ const main = (): void => {
     lastBarrierDamageTime: 0,
     playerIFrameTimer: 0,
     lastHeatGainTime: performance.now(),
-    boost: 100,
+    boost: BOOST_MAX,
+    boostActiveTimer: 0,
+    boostRechargeDelay: 0,
     scrollY: 0,
     spawnTimer: 0,
     pursuerSpawnTimer: randRange(8, 13), // First pursuer after 8-13 seconds
@@ -624,7 +633,7 @@ const main = (): void => {
       log('STATE', `Stars: ${state.stars}/5`);
       log('STATE', `Heat: ${(state.heat * 100).toFixed(1)}%`);
       log('STATE', `Integrity: ${state.player.integrity.toFixed(1)}%`);
-      log('STATE', `Boost: ${state.boost.toFixed(1)}%`);
+      log('STATE', `Boost: ${state.boost.toFixed(0)}%`);
       log('STATE', `Traffic count: ${state.traffic.length}`);
       log('STATE', `ScrollY: ${state.scrollY.toFixed(0)}`);
       log('STATE', `Demo mode: ${state.demoMode}`);
@@ -710,11 +719,12 @@ const demoAI = (state: GameState): { left: boolean; right: boolean; boost: boole
   // Steer toward target or weave if no target
   const diff = hasTarget ? targetX - playerX : Math.sin(state.frameCount * 0.02) * 50 - playerX;
   const deadzone = 20;
+  const boostReady = state.boost >= BOOST_MAX - 0.1 && state.boostActiveTimer <= 0;
 
   return {
     left: diff < -deadzone,
     right: diff > deadzone,
-    boost: state.boost > 30 && hasTarget && nearestDist < 200,
+    boost: boostReady && hasTarget && nearestDist < 200,
     brake: false,
   };
 };
@@ -790,14 +800,26 @@ const update = (state: GameState, dt: number): void => {
   const steer = (currentInput.left ? -1 : 0) + (currentInput.right ? 1 : 0);
 
   const baseSpeed = currentInput.brake ? 2 : 7;
-  const boostSpeed = currentInput.boost && state.boost > 0 ? 6 : 0;
-  const targetSpeed = -(baseSpeed + boostSpeed);
-
-  if (currentInput.boost && state.boost > 0) {
-    state.boost = Math.max(0, state.boost - 50 * stepDt);
-  } else {
-    state.boost = Math.min(100, state.boost + 20 * stepDt);
+  const boostReady = state.boost >= BOOST_MAX - 0.1 && state.boostActiveTimer <= 0;
+  if (currentInput.boost && boostReady) {
+    state.boostActiveTimer = BOOST_DURATION;
+    state.boostRechargeDelay = BOOST_RECHARGE_DELAY;
+    state.boost = 0;
   }
+
+  if (state.boostActiveTimer > 0) {
+    state.boostActiveTimer = Math.max(0, state.boostActiveTimer - stepDt);
+  }
+  if (state.boostActiveTimer <= 0) {
+    if (state.boostRechargeDelay > 0) {
+      state.boostRechargeDelay = Math.max(0, state.boostRechargeDelay - stepDt);
+    } else {
+      state.boost = Math.min(BOOST_MAX, state.boost + BOOST_RECHARGE_RATE * stepDt);
+    }
+  }
+
+  const boostSpeed = state.boostActiveTimer > 0 ? BOOST_SPEED : 0;
+  const targetSpeed = -(baseSpeed + boostSpeed);
 
   applyDriveForces(body, targetSpeed, steer, PLAYER_DRIVE);
 
@@ -1553,8 +1575,11 @@ const drawHUD = (ctx: CanvasRenderingContext2D, state: GameState, w: number): vo
   ctx.fillRect(18, 52, 124, 16);
   ctx.fillStyle = '#333';
   ctx.fillRect(20, 54, 120, 12);
-  ctx.fillStyle = '#00bfff';
-  ctx.fillRect(20, 54, 120 * (state.boost / 100), 12);
+  const boostActive = state.boostActiveTimer > 0;
+  const boostReady = state.boost >= BOOST_MAX - 0.1;
+  const boostColor = boostActive ? '#ffd447' : boostReady ? '#3df27a' : '#00bfff';
+  ctx.fillStyle = boostColor;
+  ctx.fillRect(20, 54, 120 * (state.boost / BOOST_MAX), 12);
 
   // Cash
   ctx.fillStyle = '#ffd700';
