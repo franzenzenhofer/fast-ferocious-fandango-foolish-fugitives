@@ -18,6 +18,7 @@ interface Vehicle {
   hits: number;
   spawnTime: number;
   prevPosition: { x: number; y: number };
+  prevAngle: number;
   targetLane: number;
   laneChangeTimer: number;
   isChasing: boolean;
@@ -177,6 +178,10 @@ const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 const clamp01 = (value: number): number => clamp(value, 0, 1);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+const lerpAngle = (a: number, b: number, t: number): number => {
+  const delta = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  return a + delta * t;
+};
 const random = (): number => rng();
 const randRange = (min: number, max: number): number => min + random() * (max - min);
 const randInt = (maxExclusive: number): number =>
@@ -246,10 +251,9 @@ const clampBodyMotion = (body: Matter.Body, maxSpeed: number, maxAngVel: number)
   }
 };
 
-const applyRoadBounds = (body: Matter.Body): void => {
-  const leftLimit = ROAD_LEFT + 10;
-  const rightLimit = ROAD_RIGHT - 10;
-  const spring = 0.002;
+const applyRoadBounds = (body: Matter.Body, spring = 0.002, margin = 10): void => {
+  const leftLimit = ROAD_LEFT + margin;
+  const rightLimit = ROAD_RIGHT - margin;
   if (body.position.x < leftLimit) {
     const dist = leftLimit - body.position.x;
     Matter.Body.applyForce(body, body.position, { x: dist * spring * body.mass, y: 0 });
@@ -322,6 +326,7 @@ const createVehicle = (engine: Matter.Engine, type: VehicleType, x: number, y: n
   return {
     id, type, body, integrity: 100, lane, hits: 0, spawnTime,
     prevPosition: { x, y },
+    prevAngle: body.angle,
     targetLane: lane,
     laneChangeTimer: randRange(2, 5),
     isChasing: isPolice,
@@ -577,6 +582,7 @@ const update = (state: GameState, dt: number): void => {
       state.traffic = [];
       state.activeCollisions.clear();
       state.player.prevPosition = { x: state.player.body.position.x, y: state.player.body.position.y };
+      state.player.prevAngle = state.player.body.angle;
       log('STATE', 'Respawned! Integrity restored, stars cleared');
     }
     return;
@@ -786,8 +792,10 @@ const update = (state: GameState, dt: number): void => {
   }
 
   state.player.prevPosition = { x: body.position.x, y: body.position.y };
+  state.player.prevAngle = body.angle;
   for (const v of state.traffic) {
     v.prevPosition = { x: v.body.position.x, y: v.body.position.y };
+    v.prevAngle = v.body.angle;
   }
 
   // Physics step
@@ -797,6 +805,9 @@ const update = (state: GameState, dt: number): void => {
   for (const v of state.traffic) {
     const traction = v.isWrecked ? WRECKED_TRACTION : v.stunTimer > 0 ? STUN_TRACTION : AI_TRACTION;
     clampBodyMotion(v.body, MAX_SPEED, traction.maxAngVel);
+    if (!v.isWrecked && v.stunTimer <= 0) {
+      applyRoadBounds(v.body, 0.0014, 14);
+    }
   }
 
   applyRoadBounds(body);
@@ -1039,6 +1050,7 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     x: lerp(state.player.prevPosition.x, state.player.body.position.x, clampedAlpha),
     y: lerp(state.player.prevPosition.y, state.player.body.position.y, clampedAlpha),
   };
+  const playerAngle = lerpAngle(state.player.prevAngle, state.player.body.angle, clampedAlpha);
   const playerScreenY = h * 0.65;
 
   // Clear with grass
@@ -1075,13 +1087,14 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
       x: lerp(v.prevPosition.x, v.body.position.x, clampedAlpha),
       y: lerp(v.prevPosition.y, v.body.position.y, clampedAlpha),
     };
+    const trafficAngle = lerpAngle(v.prevAngle, v.body.angle, clampedAlpha);
     const screenY = playerScreenY + (trafficPos.y - playerPos.y);
     const screenX = cx + trafficPos.x;
-    drawVehicle(ctx, v, screenX, screenY);
+    drawVehicle(ctx, v, screenX, screenY, trafficAngle);
   }
 
   // Draw player
-  drawVehicle(ctx, state.player, cx + playerPos.x, playerScreenY);
+  drawVehicle(ctx, state.player, cx + playerPos.x, playerScreenY, playerAngle);
 
   // HUD
   drawHUD(ctx, state, w);
@@ -1128,14 +1141,14 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
   ctx.restore();
 };
 
-const drawVehicle = (ctx: CanvasRenderingContext2D, v: Vehicle, screenX: number, screenY: number): void => {
+const drawVehicle = (ctx: CanvasRenderingContext2D, v: Vehicle, screenX: number, screenY: number, angle: number): void => {
   const config = VEHICLE_CONFIGS[v.type];
   const hw = config.width / 2;
   const hh = config.height / 2;
 
   ctx.save();
   ctx.translate(screenX, screenY);
-  ctx.rotate(v.body.angle);
+  ctx.rotate(angle);
 
   // Shadow (bigger for wrecks)
   ctx.fillStyle = v.isWrecked ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.3)';
