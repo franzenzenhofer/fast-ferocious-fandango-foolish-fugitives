@@ -21,3 +21,15 @@ export const parseSeed = (value: string | null, fallback: number): number => {
   }
   return hash >>> 0;
 };
+
+/**
+ * Generate a random number in range [min, max).
+ */
+export const randRange = (rng: Rng, min: number, max: number): number =>
+  min + rng() * (max - min);
+
+/**
+ * Generate a random integer in range [0, maxExclusive).
+ */
+export const randInt = (rng: Rng, maxExclusive: number): number =>
+  maxExclusive <= 0 ? 0 : Math.floor(rng() * maxExclusive);
