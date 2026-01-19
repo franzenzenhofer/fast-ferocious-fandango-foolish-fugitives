@@ -129,7 +129,7 @@ declare global {
   }
 }
 
-const input = { left: false, right: false, boost: false, brake: false };
+const input = { left: false, right: false, boost: false, brake: false, up: false };
 let vehicleId = 0;
 let rng = Math.random;
 let powerUpId = 0;
@@ -192,6 +192,20 @@ const PLAYER_DRIVE: DriveParams = {
   maxSpeedDelta: 20,
 };
 
+const PLAYER_DRIVE_COAST: DriveParams = {
+  engineForce: 0.06,
+  maxLateralSpeed: 3.6,
+  steerAccel: 0.07,
+  maxSpeedDelta: 16,
+};
+
+const PLAYER_DRIVE_BRAKE: DriveParams = {
+  engineForce: 0.2,
+  maxLateralSpeed: 3.2,
+  steerAccel: 0.07,
+  maxSpeedDelta: 20,
+};
+
 const AI_DRIVE: DriveParams = {
   engineForce: 0.08,
   maxLateralSpeed: 3,
@@ -207,6 +221,11 @@ const BOOST_RECHARGE_RATE = 28;
 const BOOST_SPEED = 8;
 const SHIELD_DURATION = 4.5;
 const POWERUP_TTL = 10;
+const PLAYER_SPEED = {
+  throttle: 9,
+  coast: 5,
+  brake: 2,
+};
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -695,6 +714,7 @@ const main = (): void => {
       input.right = false;
       input.boost = false;
       input.brake = false;
+      input.up = false;
       log('DEMO', state.demoMode ? 'Demo mode ENABLED - AI driving' : 'Demo mode DISABLED - Manual control');
     },
     getStatus: (): void => {
@@ -723,6 +743,7 @@ const main = (): void => {
     if (state.demoMode) return; // Ignore input in demo mode
     if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = true;
     if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = true;
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = true;
     if (e.code === 'Space') input.boost = true;
     if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft') input.brake = true;
   });
@@ -730,9 +751,49 @@ const main = (): void => {
     if (state.demoMode) return;
     if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
     if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = false;
     if (e.code === 'Space') input.boost = false;
     if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft') input.brake = false;
   });
+
+  const touchState = { startX: 0, startY: 0, active: false };
+
+  const clearTouchInput = (): void => {
+    touchState.active = false;
+    input.left = false;
+    input.right = false;
+    input.up = false;
+    input.brake = false;
+  };
+
+  const onTouchStart = (e: TouchEvent): void => {
+    if (state.demoMode) return;
+    const touch = e.touches[0];
+    if (touch === undefined) return;
+    e.preventDefault();
+    touchState.active = true;
+    touchState.startX = touch.clientX;
+    touchState.startY = touch.clientY;
+  };
+
+  const onTouchMove = (e: TouchEvent): void => {
+    if (!touchState.active || state.demoMode) return;
+    const touch = e.touches[0];
+    if (touch === undefined) return;
+    e.preventDefault();
+    const dx = touch.clientX - touchState.startX;
+    const dy = touch.clientY - touchState.startY;
+    const threshold = 18;
+    input.left = dx < -threshold;
+    input.right = dx > threshold;
+    input.up = dy < -threshold;
+    input.brake = dy > threshold;
+  };
+
+  canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+  canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+  canvas.addEventListener('touchend', clearTouchInput, { passive: false });
+  canvas.addEventListener('touchcancel', clearTouchInput, { passive: false });
 
   let lastTime = performance.now();
   let accumulator = 0;
@@ -765,7 +826,7 @@ const main = (): void => {
 // DEMO MODE AI
 // ============================================================================
 
-const demoAI = (state: GameState): { left: boolean; right: boolean; boost: boolean; brake: boolean } => {
+const demoAI = (state: GameState): { left: boolean; right: boolean; boost: boolean; brake: boolean; up: boolean } => {
   const playerX = state.player.body.position.x;
   const playerY = state.player.body.position.y;
 
@@ -797,6 +858,7 @@ const demoAI = (state: GameState): { left: boolean; right: boolean; boost: boole
     right: diff > deadzone,
     boost: boostReady && hasTarget && nearestDist < 200,
     brake: false,
+    up: true,
   };
 };
 
@@ -805,7 +867,7 @@ const demoAI = (state: GameState): { left: boolean; right: boolean; boost: boole
 // ============================================================================
 
 const update = (state: GameState, dt: number): void => {
-  const timeScale = state.slowMo > 0 ? 0.3 : 1;
+  const timeScale = state.slowMo > 0 ? 0.7 : 1;
   if (state.slowMo > 0) {
     state.slowMo = Math.max(0, state.slowMo - dt);
   }
@@ -874,9 +936,15 @@ const update = (state: GameState, dt: number): void => {
   const body = state.player.body;
   const steer = (currentInput.left ? -1 : 0) + (currentInput.right ? 1 : 0);
 
-  const baseSpeed = currentInput.brake ? 2 : 7;
+  const wantsBrake = currentInput.brake;
+  const wantsThrottle = currentInput.up;
+  const baseSpeed = wantsBrake
+    ? PLAYER_SPEED.brake
+    : wantsThrottle
+      ? PLAYER_SPEED.throttle
+      : PLAYER_SPEED.coast;
   const boostReady = state.boost >= BOOST_MAX - 0.1 && state.boostActiveTimer <= 0;
-  if (currentInput.boost && boostReady) {
+  if (currentInput.boost && boostReady && !wantsBrake) {
     state.boostActiveTimer = BOOST_DURATION;
     state.boostRechargeDelay = BOOST_RECHARGE_DELAY;
     state.boost = 0;
@@ -896,7 +964,8 @@ const update = (state: GameState, dt: number): void => {
   const boostSpeed = state.boostActiveTimer > 0 ? BOOST_SPEED : 0;
   const targetSpeed = -(baseSpeed + boostSpeed);
 
-  applyDriveForces(body, targetSpeed, steer, PLAYER_DRIVE);
+  const driveParams = wantsBrake ? PLAYER_DRIVE_BRAKE : wantsThrottle ? PLAYER_DRIVE : PLAYER_DRIVE_COAST;
+  applyDriveForces(body, targetSpeed, steer, driveParams);
 
   // Spawn traffic AHEAD of player (negative Y = above player on screen)
   const earlyPhase = state.elapsedTime < 30;
@@ -1263,7 +1332,7 @@ const handleCollisions = (state: GameState): void => {
         }
 
         if (tier === 'slam' || tier === 'crash') {
-          state.slowMo = 0.2;
+          state.slowMo = 0.12;
           state.screenShake = Math.max(state.screenShake, Math.min(6, energy / 40));
         }
 
@@ -1309,7 +1378,7 @@ const handleCollisions = (state: GameState): void => {
         if (canDamageVehicle && vehicle.integrity <= 0) {
           log('HIT', `🚗 ${vehicle.type.toUpperCase()} #${vehicle.id} wrecked`);
           if (vehicle.type === 'geldtransporter' || vehicle.type === 'police') {
-            state.slowMo = 0.3;
+            state.slowMo = 0.18;
           }
           destroyVehicle(state, vehicle);
           currentCollisions.delete(vehicleId);
@@ -1458,7 +1527,7 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('STEER: A/D or \u2190/\u2192  BOOST: SPACE  BRAKE: S/\u2193  DEMO: F1', w / 2, h - 45);
+    ctx.fillText('STEER: A/D or \u2190/\u2192  ACCEL: W/\u2191  BOOST: SPACE  BRAKE: S/\u2193  DEMO: F1', w / 2, h - 45);
     ctx.restore();
   }
 
@@ -1493,12 +1562,6 @@ const render = (ctx: CanvasRenderingContext2D, state: GameState, w: number, h: n
     ctx.font = '24px monospace';
     ctx.fillText(`Lost $${Math.floor(state.cash * 0.3).toLocaleString()} in bribes`, w / 2, h / 2 + 20);
     ctx.textAlign = 'left';
-  }
-
-  // Slow-mo visual indicator
-  if (state.slowMo > 0) {
-    ctx.fillStyle = 'rgba(0, 100, 255, 0.1)';
-    ctx.fillRect(0, 0, w, h);
   }
 
   // Low integrity warning
