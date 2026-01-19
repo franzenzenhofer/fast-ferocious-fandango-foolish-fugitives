@@ -10,6 +10,7 @@ import { createRng, parseSeed } from './utils/random.ts';
 // ============================================================================
 
 type PoliceMode = 'shadow' | 'ram';
+type AIMode = 'lane' | 'weave' | 'block' | 'escort';
 
 interface Vehicle {
   id: number;
@@ -26,6 +27,7 @@ interface Vehicle {
   ramCooldown: number;
   spawnGraceTimer: number;
   sidePreference: number;
+  aiMode: AIMode;
   targetLane: number;
   laneChangeTimer: number;
   isChasing: boolean;
@@ -306,6 +308,75 @@ const updatePoliceMode = (vehicle: Vehicle): void => {
   vehicle.sidePreference = random() < 0.5 ? -1 : 1;
 };
 
+const getDefaultAIMode = (type: VehicleType): AIMode => {
+  switch (type) {
+    case 'sports':
+      return 'weave';
+    case 'truck':
+      return 'block';
+    case 'geldtransporter':
+      return 'escort';
+    default:
+      return 'lane';
+  }
+};
+
+const isLaneBlocked = (state: GameState, lane: number, y: number, minGap: number, ignoreId: number): boolean => {
+  for (const other of state.traffic) {
+    if (other.id === ignoreId) continue;
+    if (other.lane !== lane) continue;
+    if (Math.abs(other.body.position.y - y) < minGap) return true;
+  }
+  return false;
+};
+
+const updateTargetLane = (state: GameState, vehicle: Vehicle, relY: number, stepDt: number): void => {
+  vehicle.laneChangeTimer = Math.max(0, vehicle.laneChangeTimer - stepDt);
+  if (vehicle.laneChangeTimer > 0) return;
+
+  const playerLane = getNearestLane(state.player.body.position.x);
+  const reactionDistance = 180;
+  const minGap = 140;
+  const avoidPlayerLane = Math.abs(relY) < 240;
+
+  if (Math.abs(relY) < reactionDistance) {
+    vehicle.laneChangeTimer = randRange(0.6, 1.2);
+    return;
+  }
+
+  const candidates: number[] = [];
+  if (vehicle.aiMode === 'weave') {
+    const dir = random() < 0.5 ? -1 : 1;
+    candidates.push(vehicle.targetLane + dir, vehicle.targetLane - dir, vehicle.targetLane);
+  } else if (vehicle.aiMode === 'block') {
+    candidates.push(playerLane, vehicle.targetLane, vehicle.targetLane + 1, vehicle.targetLane - 1);
+  } else if (vehicle.aiMode === 'escort') {
+    const farLane = playerLane < LANE_COUNT / 2 ? LANE_COUNT - 1 : 0;
+    candidates.push(farLane, vehicle.targetLane, farLane === 0 ? 1 : LANE_COUNT - 2);
+  } else {
+    candidates.push(vehicle.targetLane, vehicle.targetLane + 1, vehicle.targetLane - 1);
+  }
+
+  let nextLane = vehicle.targetLane;
+  for (const lane of candidates) {
+    if (lane < 0 || lane >= LANE_COUNT) continue;
+    if (avoidPlayerLane && lane === playerLane) continue;
+    if (!isLaneBlocked(state, lane, vehicle.body.position.y, minGap, vehicle.id)) {
+      nextLane = lane;
+      break;
+    }
+  }
+
+  vehicle.targetLane = nextLane;
+  vehicle.laneChangeTimer = vehicle.aiMode === 'weave'
+    ? randRange(1.2, 2.2)
+    : vehicle.aiMode === 'block'
+      ? randRange(1.5, 2.8)
+      : vehicle.aiMode === 'escort'
+        ? randRange(2.4, 4.0)
+        : randRange(1.8, 3.6);
+};
+
 const getPoliceSteer = (state: GameState, vehicle: Vehicle, relY: number): number => {
   const playerX = state.player.body.position.x;
   const playerVx = state.player.body.velocity.x;
@@ -420,6 +491,7 @@ const createVehicle = (engine: Matter.Engine, type: VehicleType, x: number, y: n
     ramCooldown: 0,
     spawnGraceTimer: isPolice ? 0.8 : 0,
     sidePreference: random() < 0.5 ? -1 : 1,
+    aiMode: getDefaultAIMode(type),
     targetLane: lane,
     laneChangeTimer: randRange(2, 5),
     isChasing: isPolice,
@@ -796,6 +868,7 @@ const update = (state: GameState, dt: number): void => {
     const trafficX = v.body.position.x;
     const trafficY = v.body.position.y;
     const relY = trafficY - playerY;
+    v.lane = getNearestLane(trafficX);
 
     // === WRECKED VEHICLES: Stay as obstacles ===
     if (v.isWrecked) {
@@ -846,6 +919,12 @@ const update = (state: GameState, dt: number): void => {
       if (v.spawnGraceTimer > 0) {
         desiredSpeed = Math.min(desiredSpeed, playerSpeed + 1);
       }
+    } else if (v.aiMode === 'escort') {
+      desiredSpeed = Math.min(desiredSpeed, playerSpeed + 0.6);
+    } else if (v.aiMode === 'block') {
+      if (Math.abs(relY) < 220) {
+        desiredSpeed = lerp(desiredSpeed, playerSpeed + 0.5, 0.2);
+      }
     }
 
     // === STUNNED: NO CONTROL - just slide! ===
@@ -867,11 +946,13 @@ const update = (state: GameState, dt: number): void => {
         const dx = playerX - trafficX;
         steerForce = Math.sign(dx) * 0.3;
       } else if (v.type !== 'geldtransporter') {
+        updateTargetLane(state, v, relY, stepDt);
         // Regular traffic - lane keeping + avoid getting too close to others
         const targetX = getLaneX(v.targetLane);
         const laneError = targetX - trafficX;
         if (Math.abs(laneError) > 20) {
-          steerForce = Math.sign(laneError) * 0.04;
+          const baseSteer = v.aiMode === 'weave' ? 0.06 : v.aiMode === 'block' ? 0.08 : 0.04;
+          steerForce = Math.sign(laneError) * baseSteer;
         }
 
         // Gentle avoidance of nearby cars in same lane
@@ -884,6 +965,13 @@ const update = (state: GameState, dt: number): void => {
           if (distY < 80 && Math.abs(distX) < 40) {
             steerForce -= Math.sign(distX) * 0.08; // Move away
           }
+        }
+      } else {
+        updateTargetLane(state, v, relY, stepDt);
+        const targetX = getLaneX(v.targetLane);
+        const laneError = targetX - trafficX;
+        if (Math.abs(laneError) > 16) {
+          steerForce = Math.sign(laneError) * 0.03;
         }
       }
 
